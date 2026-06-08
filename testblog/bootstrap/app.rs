@@ -1,21 +1,14 @@
 // bootstrap/app.rs — Application bootstrap
-//
-// Registers providers, middleware, and routes using the Ravel Application.
-
 use anyhow::Result;
 use ravel_core::app::{Application, ServiceProvider};
 use ravel_core::container::Container;
+use ravel_facades::Route;
 
-use crate::routes::web;
-
-/// A provider that registers web routes into the container.
 pub struct RouteServiceProvider;
 
 impl ServiceProvider for RouteServiceProvider {
-    fn register(&self, container: &Container) -> Result<()> {
-        // Build routes and store the Router in the container.
-        let router = web::routes().build();
-        container.instance(router);
+    fn register(&self, _container: &Container) -> Result<()> {
+        Route::get("/", || async { "Hello, Ravel!" });
         Ok(())
     }
 
@@ -25,7 +18,7 @@ impl ServiceProvider for RouteServiceProvider {
 }
 
 /// Create and boot the Ravel application.
-pub fn create_app() -> Application {
+pub fn create_app() {
     Application::new()
         .load_env(".")
         .expect("Failed to load .env")
@@ -33,5 +26,5 @@ pub fn create_app() -> Application {
         .expect("Failed to load config")
         .register_provider(RouteServiceProvider)
         .boot()
-        .expect("Failed to boot application")
+        .expect("Failed to boot application");
 }

@@ -78,9 +78,11 @@ impl AppGlobal {
     }
 }
 
-#[cfg(test)]
 impl AppGlobal {
-    /// Reset the global app so the next test can call `boot()` afresh.
+    /// Reset the global app so the next call to `boot()` succeeds.
+    ///
+    /// In production this is rarely needed; it is primarily used between
+    /// test cases that share the same process.
     pub fn reset(&self) {
         *self.inner.lock().expect("APP mutex poisoned") = None;
     }

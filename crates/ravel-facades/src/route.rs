@@ -42,50 +42,55 @@ impl Route {
         }
     }
 
-    pub fn get(
-        path: &str,
-        handler: impl axum::handler::Handler<(), ()> + Clone + Send + Sync + 'static,
-    ) {
+    pub fn get<H, T>(path: &str, handler: H)
+    where
+        H: axum::handler::Handler<T, ()>,
+        T: 'static,
+    {
         Self::with_router(|state| {
             let full = Self::full_path(state, path);
             state.router = state.router.clone().route(&full, routing::get(handler));
         });
     }
 
-    pub fn post(
-        path: &str,
-        handler: impl axum::handler::Handler<(), ()> + Clone + Send + Sync + 'static,
-    ) {
+    pub fn post<H, T>(path: &str, handler: H)
+    where
+        H: axum::handler::Handler<T, ()>,
+        T: 'static,
+    {
         Self::with_router(|state| {
             let full = Self::full_path(state, path);
             state.router = state.router.clone().route(&full, routing::post(handler));
         });
     }
 
-    pub fn put(
-        path: &str,
-        handler: impl axum::handler::Handler<(), ()> + Clone + Send + Sync + 'static,
-    ) {
+    pub fn put<H, T>(path: &str, handler: H)
+    where
+        H: axum::handler::Handler<T, ()>,
+        T: 'static,
+    {
         Self::with_router(|state| {
             let full = Self::full_path(state, path);
             state.router = state.router.clone().route(&full, routing::put(handler));
         });
     }
 
-    pub fn delete(
-        path: &str,
-        handler: impl axum::handler::Handler<(), ()> + Clone + Send + Sync + 'static,
-    ) {
+    pub fn delete<H, T>(path: &str, handler: H)
+    where
+        H: axum::handler::Handler<T, ()>,
+        T: 'static,
+    {
         Self::with_router(|state| {
             let full = Self::full_path(state, path);
             state.router = state.router.clone().route(&full, routing::delete(handler));
         });
     }
 
-    pub fn patch(
-        path: &str,
-        handler: impl axum::handler::Handler<(), ()> + Clone + Send + Sync + 'static,
-    ) {
+    pub fn patch<H, T>(path: &str, handler: H)
+    where
+        H: axum::handler::Handler<T, ()>,
+        T: 'static,
+    {
         Self::with_router(|state| {
             let full = Self::full_path(state, path);
             state.router = state.router.clone().route(&full, routing::patch(handler));
@@ -116,10 +121,29 @@ impl Route {
         });
     }
 
-    /// Build the final Router. Consumes the registry.
-    /// Subsequent calls to Route methods will panic.
+    /// Build the final Router and reset the registry for the next cycle.
+    ///
+    /// Unlike the old `Route::build()`, this does **not** permanently consume
+    /// the registry. It clones the accumulated router and clears the internal
+    /// state so the next batch of `Route::get()/post()` calls can be
+    /// registered.  This makes it safe to call from multiple test cases.
     pub fn build() -> Router {
         let mut guard = registry().lock();
-        guard.take().expect("Route::build() already called").router
+        let state = guard.as_mut().expect("Route registry not available");
+        let router = state.router.clone();
+        state.router = Router::new();
+        state.group_stack.clear();
+        router
+    }
+
+    /// Clear all registered routes so a fresh batch can be registered.
+    ///
+    /// Useful between test cases that share the same process.
+    pub fn reset() {
+        let mut guard = registry().lock();
+        if let Some(state) = guard.as_mut() {
+            state.router = Router::new();
+            state.group_stack.clear();
+        }
     }
 }

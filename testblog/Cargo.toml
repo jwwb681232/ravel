@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 ravel-core = { path = "../crates/ravel-core" }
+ravel-facades = { path = "../crates/ravel-facades" }
 ravel-http = { path = "../crates/ravel-http" }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }

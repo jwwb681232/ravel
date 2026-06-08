@@ -18,6 +18,19 @@ pub mod auth;
 pub mod storage;
 pub mod utils;
 
+// ── Re-exports for convenience ───────────────────────────────────────
+pub use auth::Auth;
+pub use cache::Cache;
+pub use collection::Collection;
+pub use config::Config;
+pub use crypt::Crypt;
+pub use hash::Hash;
+pub use log::Log;
+pub use queue::Queue;
+pub use route::Route;
+pub use session::Session;
+pub use storage::Storage;
+
 /// Extension trait for Application to register services from ravel-support.
 pub trait ApplicationExt: Sized {
     fn with_queue(self) -> Self;
