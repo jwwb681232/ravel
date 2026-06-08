@@ -1,0 +1,10 @@
+[book]
+title = "Ravel Framework"
+authors = ["Ravel Contributors"]
+language = "en"
+multilingual = false
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/jwwb681232/ravel"
+edit-url-template = "https://github.com/jwwb681232/ravel/edit/master/docs/book/{path}"
