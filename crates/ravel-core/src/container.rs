@@ -56,17 +56,21 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
+// FactoryFn — type alias for the stored factory callable
+// ---------------------------------------------------------------------------
+
+type FactoryFn = Arc<dyn Fn(&Container) -> Box<dyn Any + Send + Sync> + Send + Sync>;
+
+// ---------------------------------------------------------------------------
 // Entry
 // ---------------------------------------------------------------------------
 
 enum Entry {
-    /// A transient factory — each `resolve_fresh` call invokes it anew.
-    Factory(Box<dyn Fn(&Container) -> Box<dyn Any + Send + Sync> + Send + Sync>),
+    /// A transient factory — each `resolve_fresh` call invokes it.
+    Factory(FactoryFn),
 
     /// A singleton factory — invoked at most once, then cached as `Instance`.
-    SingletonFactory(
-        Box<dyn Fn(&Container) -> Box<dyn Any + Send + Sync> + Send + Sync>,
-    ),
+    SingletonFactory(FactoryFn),
 
     /// A fully materialised value (pre-built or resolved singleton).
     Instance(Box<dyn Any + Send + Sync>),
@@ -109,10 +113,8 @@ impl Container {
             "Container: a binding for `{}` already exists",
             std::any::type_name::<T>()
         );
-        entries.insert(
-            key,
-            Entry::SingletonFactory(Box::new(move |c| Box::new(factory(c)))),
-        );
+        let f: FactoryFn = Arc::new(move |c| Box::new(factory(c)));
+        entries.insert(key, Entry::SingletonFactory(f));
     }
 
     /// Like [`singleton`] but overwrites any existing binding.
@@ -121,10 +123,10 @@ impl Container {
         T: Send + Sync + 'static,
         F: Fn(&Container) -> T + Send + Sync + 'static,
     {
-        self.entries.borrow_mut().insert(
-            TypeId::of::<T>(),
-            Entry::SingletonFactory(Box::new(move |c| Box::new(factory(c)))),
-        );
+        let f: FactoryFn = Arc::new(move |c| Box::new(factory(c)));
+        self.entries
+            .borrow_mut()
+            .insert(TypeId::of::<T>(), Entry::SingletonFactory(f));
     }
 
     // ── Instance (pre-built) ────────────────────────────────────────
@@ -176,10 +178,8 @@ impl Container {
             "Container: a binding for `{}` already exists",
             std::any::type_name::<T>()
         );
-        entries.insert(
-            key,
-            Entry::Factory(Box::new(move |c| Box::new(factory(c)))),
-        );
+        let f: FactoryFn = Arc::new(move |c| Box::new(factory(c)));
+        entries.insert(key, Entry::Factory(f));
     }
 
     /// Like [`bind`] but overwrites any existing binding.
@@ -188,10 +188,10 @@ impl Container {
         T: Send + Sync + 'static,
         F: Fn(&Container) -> T + Send + Sync + 'static,
     {
-        self.entries.borrow_mut().insert(
-            TypeId::of::<T>(),
-            Entry::Factory(Box::new(move |c| Box::new(factory(c)))),
-        );
+        let f: FactoryFn = Arc::new(move |c| Box::new(factory(c)));
+        self.entries
+            .borrow_mut()
+            .insert(TypeId::of::<T>(), Entry::Factory(f));
     }
 
     // ── Resolution ──────────────────────────────────────────────────
@@ -218,8 +218,7 @@ impl Container {
             if let Some(entry) = entries.remove(&key) {
                 match entry {
                     Entry::SingletonFactory(f) => {
-                        // Important: drop entries borrow before calling f(self)
-                        // because f might call back into the container.
+                        // Drop borrow before calling factory (it may call back into the container).
                         drop(entries);
                         let instance: Box<dyn Any + Send + Sync> = f(self);
                         self.entries
@@ -235,20 +234,13 @@ impl Container {
             }
         }
 
-        // Now the entry *must* be an Instance (or absent / Factory).
-        // We cannot return a &T directly from a RefCell borrow because
-        // RefCell::borrow() returns a Ref<T> guard.  Instead we extend
-        // the lifetime via a raw pointer — safe because:
-        // - The instance lives in the Container's heap (Box<dyn Any>)
-        // - The Container won't drop it while we have a &self
-        // - No mutable borrow can occur while &self exists
+        // Retrieve the (now) Instance.
+        // SAFETY: we extend the reference lifetime beyond the Ref-borrow-guard
+        // because the Box<dyn Any> lives in the Container, which outlives &self.
         let entries = self.entries.borrow();
         match entries.get(&key) {
             Some(Entry::Instance(boxed)) => {
                 let ptr: *const T = boxed.downcast_ref::<T>()?;
-                // SAFETY: ptr points into a Box<dyn Any> stored in
-                // self.entries.  self is borrowed as &self, preventing
-                // any mutable access that could deallocate the Box.
                 Some(unsafe { &*ptr })
             }
             _ => None,
@@ -257,24 +249,22 @@ impl Container {
 
     /// Resolve a transient factory binding, returning an **owned** `T`.
     /// Each call invokes the factory anew.
+    ///
+    /// Returns `None` when no transient binding exists for `T`.
     pub fn resolve_fresh<T: Send + Sync + 'static>(&self) -> Option<T> {
         let key = TypeId::of::<T>();
-        let mut entries = self.entries.borrow_mut();
-        let entry = entries.remove(&key)?;
 
-        match entry {
-            Entry::Factory(f) => {
-                drop(entries);
-                let instance = f(self);
-                // Put the factory back
-                self.entries.borrow_mut().insert(key, Entry::Factory(f));
-                instance.downcast::<T>().ok().map(|b| *b)
+        // Clone the Arc so we can call the factory without holding a borrow.
+        let f: FactoryFn = {
+            let entries = self.entries.borrow();
+            match entries.get(&key)? {
+                Entry::Factory(f) => Arc::clone(f),
+                _ => return None,
             }
-            other => {
-                entries.insert(key, other);
-                None
-            }
-        }
+        };
+
+        let instance = f(self);
+        instance.downcast::<T>().ok().map(|b| *b)
     }
 
     // ── Introspection ───────────────────────────────────────────────
@@ -410,6 +400,21 @@ mod tests {
 
         // resolve() returns None for transient factories
         assert!(c.resolve::<u32>().is_none());
+    }
+
+    #[test]
+    fn transient_factory_receives_container() {
+        let c = Container::new();
+
+        // Register a base value that the transient factory reads
+        c.instance(100u32);
+
+        c.bind(move |cx: &Container| {
+            let base: &u32 = cx.resolve().unwrap();
+            format!("value={base}")
+        });
+
+        assert_eq!(c.resolve_fresh::<String>().unwrap(), "value=100");
     }
 
     // ── Trait objects ─────────────────────────────────────────────
