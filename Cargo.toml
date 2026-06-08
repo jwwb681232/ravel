@@ -4,6 +4,7 @@
 members = [
     "crates/ravel-cli",
     "crates/ravel-core",
+    "crates/ravel-db",
     "crates/ravel-http",
     "crates/ravel-generator"
 ]
