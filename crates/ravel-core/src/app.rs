@@ -57,7 +57,7 @@ impl AppGlobal {
     ///
     /// Returns `Err(app)` if the global has already been set.
     pub fn set(&self, app: Application) -> Result<(), Application> {
-        let mut guard = self.inner.lock().expect("APP mutex poisoned");
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_some() {
             return Err(app);
         }
@@ -69,7 +69,7 @@ impl AppGlobal {
     ///
     /// Returns `None` if [`Application::boot()`] has not been called yet.
     pub fn get(&self) -> Option<AppRef<'_>> {
-        let guard = self.inner.lock().expect("APP mutex poisoned");
+        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_some() {
             Some(AppRef(guard))
         } else {
@@ -83,8 +83,13 @@ impl AppGlobal {
     ///
     /// In production this is rarely needed; it is primarily used between
     /// test cases that share the same process.
+    ///
+    /// Recovers from a poisoned mutex (which can happen after a
+    /// `#[should_panic]` test unwinds while holding the APP lock) so that
+    /// subsequent test cases can continue without a panic cascade.
     pub fn reset(&self) {
-        *self.inner.lock().expect("APP mutex poisoned") = None;
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = None;
     }
 }
 

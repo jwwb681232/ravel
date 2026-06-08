@@ -31,6 +31,14 @@ pub use route::Route;
 pub use session::Session;
 pub use storage::Storage;
 
+// Re-export utility functions at crate root.
+pub use utils::{env, env_or, now};
+
+// Re-export response helpers at crate root.
+// Note: `response` the function is not re-exported here to avoid a naming
+// conflict with the `response` module — use `response::response()` instead.
+pub use response::{back, abort, redirect};
+
 /// Extension trait for Application to register services from ravel-support.
 pub trait ApplicationExt: Sized {
     fn with_queue(self) -> Self;
