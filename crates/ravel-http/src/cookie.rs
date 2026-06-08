@@ -66,7 +66,7 @@ impl<S: Send + Sync> FromRequestParts<S> for CookieJar {
             .headers
             .get("cookie")
             .and_then(|v| v.to_str().ok())
-            .map(|h| CookieJar::parse(h))
+            .map(CookieJar::parse)
             .unwrap_or(CookieJar {
                 cookies: HashMap::new(),
             });
@@ -257,19 +257,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_cookie_response() {
-        let resp = CookieResponse::new(
-            SetCookie::new("x", "y"),
-            (StatusCode::OK, "ok"),
-        )
-        .into_response();
+        let resp =
+            CookieResponse::new(SetCookie::new("x", "y"), (StatusCode::OK, "ok")).into_response();
         assert_eq!(resp.status(), StatusCode::OK);
-        assert!(resp
-            .headers()
-            .get("Set-Cookie")
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .contains("x=y"));
+        assert!(
+            resp.headers()
+                .get("Set-Cookie")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .contains("x=y")
+        );
     }
 
     #[test]

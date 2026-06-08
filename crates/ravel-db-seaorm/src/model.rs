@@ -24,7 +24,7 @@
 // Re-export the key SeaORM macros so users can `use ravel_db::model::*`.
 pub use sea_orm::{
     ActiveModelBehavior, ActiveModelTrait, ActiveValue, ColumnTrait, DeriveActiveModel,
-    DeriveColumn, DeriveEntityModel, DeriveIntoActiveModel, DerivePartialModel,
-    DerivePrimaryKey, DeriveRelation, EntityTrait, EnumIter, ModelTrait, PaginatorTrait,
-    PrimaryKeyTrait, QueryFilter, QueryOrder, QuerySelect, Related, RelationTrait,
+    DeriveColumn, DeriveEntityModel, DeriveIntoActiveModel, DerivePartialModel, DerivePrimaryKey,
+    DeriveRelation, EntityTrait, EnumIter, ModelTrait, PaginatorTrait, PrimaryKeyTrait,
+    QueryFilter, QueryOrder, QuerySelect, Related, RelationTrait,
 };

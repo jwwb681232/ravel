@@ -15,11 +15,11 @@
 //!     .build();
 //! ```
 
+use axum::Json;
 use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Mutex;
@@ -76,8 +76,11 @@ impl RateLimiter {
     /// Create an Axum middleware function.
     pub fn middleware(
         self,
-    ) -> impl Fn(Request, Next) -> Pin<Box<dyn std::future::Future<Output = Response> + Send>> + Clone + Send + Sync + 'static
-    {
+    ) -> impl Fn(Request, Next) -> Pin<Box<dyn std::future::Future<Output = Response> + Send>>
+    + Clone
+    + Send
+    + Sync
+    + 'static {
         move |req: Request, next: Next| {
             let limiter = self.clone();
             Box::pin(async move { limiter.handle(req, next).await })

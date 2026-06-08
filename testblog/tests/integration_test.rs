@@ -9,8 +9,8 @@
 //! - FormRequest validation works
 
 use anyhow::Result;
-use axum::http::StatusCode;
 use axum::Router;
+use axum::http::StatusCode;
 use ravel_core::app::{Application, ServiceProvider};
 use ravel_core::container::Container;
 use ravel_http::form_request::{FormRequest, Validated};
@@ -39,14 +39,18 @@ struct TestRouteProvider;
 
 impl ServiceProvider for TestRouteProvider {
     fn register(&self, container: &Container) -> Result<()> {
-        let router = Route::new()
-            .get("/", || async { "Hello, Ravel!" })
-            .get("/health", || async { (StatusCode::OK, "OK") })
-            .post("/greet", |Validated(req): Validated<GreetRequest>| async move {
-                format!("Hello, {}!", req.name)
-            })
-            .middleware(middleware::log_requests)
-            .build();
+        let router =
+            Route::new()
+                .get("/", || async { "Hello, Ravel!" })
+                .get("/health", || async { (StatusCode::OK, "OK") })
+                .post(
+                    "/greet",
+                    |Validated(req): Validated<GreetRequest>| async move {
+                        format!("Hello, {}!", req.name)
+                    },
+                )
+                .middleware(middleware::log_requests)
+                .build();
         container.instance(router);
         Ok(())
     }
@@ -93,9 +97,7 @@ fn test_app_is_booted() {
 
 #[test]
 fn test_app_config_loaded() {
-    let app = Application::new()
-        .load_config("nonexistent-dir")
-        .unwrap();
+    let app = Application::new().load_config("nonexistent-dir").unwrap();
     // Config loads OK even for missing dir (just empty)
     assert!(!app.config().is_empty() || app.config().is_empty());
     // Container was set up during load_config
@@ -136,9 +138,7 @@ async fn test_health_endpoint() {
 #[tokio::test]
 async fn test_post_greet_valid() {
     let client = ravel_test::TestClient::new(test_app_router());
-    let resp = client
-        .post_json("/greet", r#"{"name":"Alice"}"#)
-        .await;
+    let resp = client.post_json("/greet", r#"{"name":"Alice"}"#).await;
     resp.assert_ok();
     resp.assert_see("Hello, Alice!");
 }
@@ -146,17 +146,13 @@ async fn test_post_greet_valid() {
 #[tokio::test]
 async fn test_post_greet_validation_fails() {
     let client = ravel_test::TestClient::new(test_app_router());
-    let resp = client
-        .post_json("/greet", r#"{"name":"X"}"#)
-        .await;
+    let resp = client.post_json("/greet", r#"{"name":"X"}"#).await;
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]
 async fn test_post_greet_missing_field() {
     let client = ravel_test::TestClient::new(test_app_router());
-    let resp = client
-        .post_json("/greet", r#"{}"#)
-        .await;
+    let resp = client.post_json("/greet", r#"{}"#).await;
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }

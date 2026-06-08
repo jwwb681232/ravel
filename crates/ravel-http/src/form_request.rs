@@ -45,10 +45,10 @@
 //! }
 //! ```
 
+use axum::Json;
 use axum::extract::{FromRequest, Request};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 
@@ -182,7 +182,10 @@ where
         if let Err(errs) = validation_result {
             let mut error_map: HashMap<String, Vec<String>> = HashMap::new();
             for e in &errs {
-                error_map.entry(e.field.clone()).or_default().push(e.message.clone());
+                error_map
+                    .entry(e.field.clone())
+                    .or_default()
+                    .push(e.message.clone());
             }
             return Err(RavelError::ValidationError(error_map));
         }
@@ -333,5 +336,4 @@ mod tests {
             _ => panic!("Expected validation failure"),
         }
     }
-
 }

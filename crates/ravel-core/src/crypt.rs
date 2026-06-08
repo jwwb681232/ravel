@@ -15,9 +15,11 @@
 //! assert_eq!(decrypted, b"secret data");
 //! ```
 
+#![allow(deprecated)]
+
+use aes_gcm::Aes256Gcm;
 use aes_gcm::aead::generic_array::GenericArray;
 use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::Aes256Gcm;
 use anyhow::{Context, Result};
 use base64::Engine;
 use rand::Rng;

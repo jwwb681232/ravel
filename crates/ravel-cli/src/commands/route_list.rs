@@ -17,7 +17,7 @@ pub fn handle() -> Result<()> {
         let mut found = false;
         let mut entries: Vec<_> = fs::read_dir(routes_dir)?
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "rs"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
             .collect();
         entries.sort_by_key(|e| e.file_name());
 
@@ -65,10 +65,10 @@ fn parse_routes(source: &str) -> Vec<(String, String)> {
         let trimmed = line.trim();
         for method in &methods {
             // Match `.method("/path", ...)`
-            if trimmed.starts_with(&format!(".{}(\"", method)) {
-                if let Some(path) = extract_path(trimmed, method) {
-                    routes.push((method.to_uppercase(), path));
-                }
+            if trimmed.starts_with(&format!(".{}(\"", method))
+                && let Some(path) = extract_path(trimmed, method)
+            {
+                routes.push((method.to_uppercase(), path));
             }
         }
     }

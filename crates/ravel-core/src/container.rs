@@ -51,8 +51,8 @@
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::RwLock;
 
@@ -190,9 +190,10 @@ impl Container {
         T: Send + Sync + 'static,
     {
         self.assert_not_frozen();
-        self.entries
-            .write()
-            .insert(TypeId::of::<T>(), Entry::Instance(Box::new(Arc::new(value))));
+        self.entries.write().insert(
+            TypeId::of::<T>(),
+            Entry::Instance(Box::new(Arc::new(value))),
+        );
     }
 
     // ── Transient factory ───────────────────────────────────────────
@@ -548,7 +549,9 @@ mod tests {
     #[test]
     fn resolve_works_after_freeze() {
         let c = Container::new();
-        c.singleton(|_| Greeter { prefix: "Hi".into() });
+        c.singleton(|_| Greeter {
+            prefix: "Hi".into(),
+        });
         c.freeze();
 
         // Should still be able to resolve after freeze
@@ -561,7 +564,9 @@ mod tests {
         use std::thread;
 
         let c = Arc::new(Container::new());
-        c.singleton(|_| Greeter { prefix: "Threaded".into() });
+        c.singleton(|_| Greeter {
+            prefix: "Threaded".into(),
+        });
         c.freeze();
 
         let handles: Vec<_> = (0..4)

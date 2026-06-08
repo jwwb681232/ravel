@@ -15,11 +15,11 @@
 //!     .build();
 //! ```
 
+use axum::Json;
 use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use std::pin::Pin;
 
 /// CSRF token length in bytes (before base64 encoding).
@@ -68,8 +68,11 @@ impl Csrf {
     /// Create an Axum middleware function from this CSRF config.
     pub fn middleware(
         self,
-    ) -> impl Fn(Request, Next) -> Pin<Box<dyn std::future::Future<Output = Response> + Send>> + Clone + Send + Sync + 'static
-    {
+    ) -> impl Fn(Request, Next) -> Pin<Box<dyn std::future::Future<Output = Response> + Send>>
+    + Clone
+    + Send
+    + Sync
+    + 'static {
         move |req: Request, next: Next| {
             let csrf = self.clone();
             Box::pin(async move { csrf.handle(req, next).await })
@@ -97,15 +100,18 @@ impl Csrf {
                     "message": "CSRF token mismatch",
                     "status": 419,
                 });
-                (StatusCode::from_u16(419).unwrap_or(StatusCode::FORBIDDEN), Json(body))
+                (
+                    StatusCode::from_u16(419).unwrap_or(StatusCode::FORBIDDEN),
+                    Json(body),
+                )
                     .into_response()
             }
         }
     }
 
     fn hmac_sign(&self, data: &str) -> String {
-        use sha2::Sha256;
         use hmac::{Hmac, Mac};
+        use sha2::Sha256;
         let mut mac = Hmac::<Sha256>::new_from_slice(&self.key).expect("HMAC key");
         Mac::update(&mut mac, data.as_bytes());
         let result = Mac::finalize(mac);
@@ -114,10 +120,7 @@ impl Csrf {
 }
 
 fn is_state_changing(method: &axum::http::Method) -> bool {
-    matches!(
-        method.as_str(),
-        "POST" | "PUT" | "PATCH" | "DELETE"
-    )
+    matches!(method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE")
 }
 
 fn base64_encode(data: &[u8]) -> String {
@@ -129,10 +132,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    a.iter()
-        .zip(b.iter())
-        .fold(0, |acc, (x, y)| acc | (x ^ y))
-        == 0
+    a.iter().zip(b.iter()).fold(0, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────

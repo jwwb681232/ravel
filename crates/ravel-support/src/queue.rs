@@ -31,10 +31,10 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use tracing::{error, warn};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use tracing::{error, warn};
 use uuid::Uuid;
 
 // ── JobPayload ──────────────────────────────────────────────────────────
@@ -184,7 +184,11 @@ impl QueueDriver for MemoryDriver {
 
 // ── Job Registry ──────────────────────────────────────────────────────
 
-type JobHandler = Arc<dyn Fn(&str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send>> + Send + Sync>;
+type JobHandler = Arc<
+    dyn Fn(&str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send>>
+        + Send
+        + Sync,
+>;
 
 pub struct JobRegistry {
     handlers: HashMap<String, JobHandler>,
@@ -275,11 +279,7 @@ impl Queue {
     }
 
     /// Dispatch a job with a delay.
-    pub async fn dispatch_later<J: Job>(
-        &self,
-        job: J,
-        delay: chrono::Duration,
-    ) -> Result<()> {
+    pub async fn dispatch_later<J: Job>(&self, job: J, delay: chrono::Duration) -> Result<()> {
         let payload = serde_json::to_string(&job)?;
         let mut job_payload = JobPayload::new(J::name(), payload, J::max_attempts());
         job_payload.queue = J::queue().into();
@@ -352,15 +352,16 @@ impl Queue {
     // ── internal ──────────────────────────────────────────────────
 
     async fn process_job(&self, job: JobPayload) {
-        let registry = self.registry.lock().unwrap();
-        let handler = match registry.get(&job.job_type) {
-            Some(h) => h.clone(),
-            None => {
-                warn!("unregistered job type '{}', skipping", job.job_type);
-                return;
+        let handler = {
+            let registry = self.registry.lock().unwrap();
+            match registry.get(&job.job_type) {
+                Some(h) => h.clone(),
+                None => {
+                    warn!("unregistered job type '{}', skipping", job.job_type);
+                    return;
+                }
             }
         };
-        drop(registry);
 
         match handler(&job.payload).await {
             Ok(()) => {
@@ -370,7 +371,10 @@ impl Queue {
                 let error_msg = format!("{e:?}");
                 error!(
                     "job '{}' ({}) attempt {}/{} failed: {error_msg}",
-                    job.job_type, job.id, job.attempts + 1, job.max_attempts
+                    job.job_type,
+                    job.id,
+                    job.attempts + 1,
+                    job.max_attempts
                 );
 
                 if job.attempts + 1 >= job.max_attempts {
@@ -385,7 +389,9 @@ impl Queue {
                     });
                     error!(
                         "job '{}' ({}) permanently failed after {} attempts",
-                        job.job_type, job.id, job.attempts + 1
+                        job.job_type,
+                        job.id,
+                        job.attempts + 1
                     );
                 } else {
                     // Retry
@@ -531,10 +537,7 @@ mod tests {
         queue.register::<BatchJob>();
 
         for _ in 0..5 {
-            queue
-                .dispatch(BatchJob { msg: "x".into() })
-                .await
-                .unwrap();
+            queue.dispatch(BatchJob { msg: "x".into() }).await.unwrap();
         }
 
         let count = queue.run().await;
@@ -551,18 +554,9 @@ mod tests {
         queue.register::<MultiJobA>();
         queue.register::<MultiJobB>();
 
-        queue
-            .dispatch(MultiJobA { msg: "a".into() })
-            .await
-            .unwrap();
-        queue
-            .dispatch(MultiJobB { value: 10 })
-            .await
-            .unwrap();
-        queue
-            .dispatch(MultiJobA { msg: "b".into() })
-            .await
-            .unwrap();
+        queue.dispatch(MultiJobA { msg: "a".into() }).await.unwrap();
+        queue.dispatch(MultiJobB { value: 10 }).await.unwrap();
+        queue.dispatch(MultiJobA { msg: "b".into() }).await.unwrap();
 
         let count = queue.run().await;
         assert_eq!(count, 3);
@@ -573,10 +567,7 @@ mod tests {
     #[tokio::test]
     async fn test_unregistered_job_skipped() {
         let queue = Queue::memory();
-        queue
-            .dispatch(UnregJob { msg: "x".into() })
-            .await
-            .unwrap();
+        queue.dispatch(UnregJob { msg: "x".into() }).await.unwrap();
         assert!(queue.work().await);
     }
 

@@ -12,9 +12,9 @@
 //! }
 //! ```
 
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use std::collections::HashMap;
 use tracing::error;
 
@@ -123,7 +123,9 @@ mod tests {
 
     fn extract_body(resp: Response) -> serde_json::Value {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let body_bytes = rt.block_on(axum::body::to_bytes(resp.into_body(), 1024)).unwrap();
+        let body_bytes = rt
+            .block_on(axum::body::to_bytes(resp.into_body(), 1024))
+            .unwrap();
         serde_json::from_slice(&body_bytes).unwrap()
     }
 
@@ -168,7 +170,12 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
         let body = extract_body(resp);
         assert_eq!(body["status"], 422);
-        assert!(body["errors"]["email"][0].as_str().unwrap().contains("required"));
+        assert!(
+            body["errors"]["email"][0]
+                .as_str()
+                .unwrap()
+                .contains("required")
+        );
     }
 
     #[test]

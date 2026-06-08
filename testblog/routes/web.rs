@@ -5,6 +5,5 @@
 use ravel_http::route::Route;
 
 pub fn routes() -> Route {
-    Route::new()
-        .get("/", || async { "Hello, Ravel!" })
+    Route::new().get("/", || async { "Hello, Ravel!" })
 }

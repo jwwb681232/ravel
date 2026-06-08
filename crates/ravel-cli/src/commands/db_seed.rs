@@ -17,10 +17,7 @@ pub fn handle() -> Result<()> {
         .status()?;
 
     if !status.success() {
-        anyhow::bail!(
-            "Seeding failed with exit code {:?}",
-            status.code()
-        );
+        anyhow::bail!("Seeding failed with exit code {:?}", status.code());
     }
 
     Ok(())

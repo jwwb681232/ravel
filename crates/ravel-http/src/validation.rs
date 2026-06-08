@@ -78,9 +78,7 @@ impl Validator {
         let mut errors = Vec::new();
 
         for field_rule in &self.rules {
-            let field_val = value
-                .as_object()
-                .and_then(|obj| obj.get(&field_rule.field));
+            let field_val = value.as_object().and_then(|obj| obj.get(&field_rule.field));
 
             for rule in &field_rule.rules {
                 if let Some(msg) = Self::check_rule(field_val, rule, &field_rule.field) {
@@ -111,21 +109,12 @@ impl Validator {
         let mut errors = Vec::new();
 
         for field_rule in &self.rules {
-            let field_val = value
-                .as_object()
-                .and_then(|obj| obj.get(&field_rule.field));
+            let field_val = value.as_object().and_then(|obj| obj.get(&field_rule.field));
 
             for rule in &field_rule.rules {
                 if let Some(msg) = Self::check_rule(field_val, rule, &field_rule.field) {
-                    let key = format!(
-                        "{}.{}",
-                        field_rule.field,
-                        rule_name(rule)
-                    );
-                    let final_msg = custom
-                        .get(&key)
-                        .cloned()
-                        .unwrap_or(msg);
+                    let key = format!("{}.{}", field_rule.field, rule_name(rule));
+                    let final_msg = custom.get(&key).cloned().unwrap_or(msg);
                     errors.push(ValidationError {
                         field: field_rule.field.clone(),
                         message: final_msg,
@@ -145,9 +134,7 @@ impl Validator {
     fn check_rule(field_val: Option<&Value>, rule: &Rule, field_name: &str) -> Option<String> {
         match rule {
             Rule::Required => match field_val {
-                None | Some(Value::Null) => {
-                    Some(format!("{field_name} is required"))
-                }
+                None | Some(Value::Null) => Some(format!("{field_name} is required")),
                 Some(Value::String(s)) if s.trim().is_empty() => {
                     Some(format!("{field_name} is required"))
                 }
@@ -156,9 +143,7 @@ impl Validator {
 
             Rule::Min(n) => match field_val {
                 Some(Value::String(s)) if s.len() < *n => {
-                    Some(format!(
-                        "{field_name} must be at least {n} characters"
-                    ))
+                    Some(format!("{field_name} must be at least {n} characters"))
                 }
                 Some(Value::Number(n_val)) => {
                     if let Some(i) = n_val.as_u64() {
@@ -176,9 +161,7 @@ impl Validator {
 
             Rule::Max(n) => match field_val {
                 Some(Value::String(s)) if s.len() > *n => {
-                    Some(format!(
-                        "{field_name} must not exceed {n} characters"
-                    ))
+                    Some(format!("{field_name} must not exceed {n} characters"))
                 }
                 Some(Value::Number(n_val)) => {
                     if let Some(i) = n_val.as_u64() {
@@ -217,12 +200,10 @@ impl Validator {
             },
 
             Rule::In(allowed) => match field_val {
-                Some(Value::String(s)) if !allowed.contains(s) => {
-                    Some(format!(
-                        "{field_name} must be one of: {}",
-                        allowed.join(", ")
-                    ))
-                }
+                Some(Value::String(s)) if !allowed.contains(s) => Some(format!(
+                    "{field_name} must be one of: {}",
+                    allowed.join(", ")
+                )),
                 _ => None,
             },
         }
@@ -318,9 +299,7 @@ mod tests {
         let v = Validator::new(vec![FieldRule::new("name", vec![Rule::Required])]);
         let mut msgs = HashMap::new();
         msgs.insert("name.required".into(), "Please enter your name".into());
-        let errs = v
-            .validate_with_messages(&json!({}), &msgs)
-            .unwrap_err();
+        let errs = v.validate_with_messages(&json!({}), &msgs).unwrap_err();
         assert_eq!(errs[0].message, "Please enter your name");
     }
 

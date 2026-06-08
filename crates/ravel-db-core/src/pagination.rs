@@ -32,7 +32,7 @@ impl<T> Page<T> {
         if self.per_page == 0 {
             return 1;
         }
-        (self.total + self.per_page - 1) / self.per_page
+        self.total.div_ceil(self.per_page)
     }
 
     /// Is there a next page?

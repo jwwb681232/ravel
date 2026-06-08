@@ -14,11 +14,11 @@
 //! }
 //! ```
 
+use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{FromRequest, Multipart, Request};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use std::path::PathBuf;
 
 /// The maximum file size (10 MB by default).
@@ -50,10 +50,7 @@ impl UploadedFile {
         let dest_dir = self.storage_root.join(dir);
         tokio::fs::create_dir_all(&dest_dir).await?;
 
-        let filename = self
-            .original_name
-            .as_deref()
-            .unwrap_or("uploaded_file");
+        let filename = self.original_name.as_deref().unwrap_or("uploaded_file");
 
         let path = dest_dir.join(filename);
         tokio::fs::write(&path, &self.data).await?;
@@ -121,12 +118,10 @@ impl<S: Send + Sync + 'static> FromRequest<S> for UploadedFile {
             if name.starts_with("file") {
                 file_name = field.file_name().map(|s| s.to_string());
                 file_type = field.content_type().map(|s| s.to_string());
-                file_data = Some(
-                    field
-                        .bytes()
-                        .await
-                        .map_err(|e| UploadError::BadRequest(format!("Failed to read field: {e}")))?,
-                );
+                file_data =
+                    Some(field.bytes().await.map_err(|e| {
+                        UploadError::BadRequest(format!("Failed to read field: {e}"))
+                    })?);
                 break;
             }
         }
@@ -201,11 +196,7 @@ mod tests {
 
     #[test]
     fn test_upload_error_too_large() {
-        let resp = UploadError::TooLarge {
-            size: 100,
-            max: 50,
-        }
-        .into_response();
+        let resp = UploadError::TooLarge { size: 100, max: 50 }.into_response();
         assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 }

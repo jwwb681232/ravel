@@ -59,37 +59,25 @@ impl MigrationRunner {
     }
 
     /// Show migration status.
-    pub async fn status<M: MigratorTrait>(
-        &self,
-        db: &DatabaseConnection,
-    ) -> Result<()> {
+    pub async fn status<M: MigratorTrait>(&self, db: &DatabaseConnection) -> Result<()> {
         M::status(db).await?;
         Ok(())
     }
 
     /// Drop all tables and re-apply all migrations.
-    pub async fn fresh<M: MigratorTrait>(
-        &self,
-        db: &DatabaseConnection,
-    ) -> Result<()> {
+    pub async fn fresh<M: MigratorTrait>(&self, db: &DatabaseConnection) -> Result<()> {
         M::fresh(db).await?;
         Ok(())
     }
 
     /// Rollback all and re-apply.
-    pub async fn refresh<M: MigratorTrait>(
-        &self,
-        db: &DatabaseConnection,
-    ) -> Result<()> {
+    pub async fn refresh<M: MigratorTrait>(&self, db: &DatabaseConnection) -> Result<()> {
         M::refresh(db).await?;
         Ok(())
     }
 
     /// Rollback all migrations.
-    pub async fn reset<M: MigratorTrait>(
-        &self,
-        db: &DatabaseConnection,
-    ) -> Result<()> {
+    pub async fn reset<M: MigratorTrait>(&self, db: &DatabaseConnection) -> Result<()> {
         M::reset(db).await?;
         Ok(())
     }

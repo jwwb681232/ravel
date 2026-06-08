@@ -2,9 +2,9 @@
 //
 // Registers providers, middleware, and routes using the Ravel Application.
 
+use anyhow::Result;
 use ravel_core::app::{Application, ServiceProvider};
 use ravel_core::container::Container;
-use anyhow::Result;
 
 use crate::routes::web;
 

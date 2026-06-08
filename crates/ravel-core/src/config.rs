@@ -51,14 +51,14 @@ impl ConfigRepo {
             .with_context(|| format!("Cannot read config directory `{}`", dir.display()))?
             .filter_map(|e| e.ok())
             .map(|e| e.path())
-            .filter(|p| p.extension().map_or(false, |ext| ext == "toml"))
+            .filter(|p| p.extension().is_some_and(|ext| ext == "toml"))
             .collect();
 
         paths.sort();
 
         for path in &paths {
-            let content =
-                fs::read_to_string(path).with_context(|| format!("Reading `{}`", path.display()))?;
+            let content = fs::read_to_string(path)
+                .with_context(|| format!("Reading `{}`", path.display()))?;
 
             let table: toml::Table = toml::from_str(&content)
                 .with_context(|| format!("Parsing `{}`", path.display()))?;
@@ -74,8 +74,8 @@ impl ConfigRepo {
         let path = path.as_ref();
         let content =
             fs::read_to_string(path).with_context(|| format!("Reading `{}`", path.display()))?;
-        let table: toml::Table = toml::from_str(&content)
-            .with_context(|| format!("Parsing `{}`", path.display()))?;
+        let table: toml::Table =
+            toml::from_str(&content).with_context(|| format!("Parsing `{}`", path.display()))?;
         self.merge_toml_table(&table, "");
         Ok(())
     }

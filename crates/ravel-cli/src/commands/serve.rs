@@ -8,16 +8,14 @@ use std::process::Command;
 pub fn handle() -> Result<()> {
     println!("🚀 Starting server...");
 
-    let status = Command::new("cargo")
-        .arg("run")
-        .status()?;
+    let status = Command::new("cargo").arg("run").status()?;
 
     if !status.success() {
         // ctrl-c gives non-zero; that's fine
-        if let Some(code) = status.code() {
-            if code != 130 {
-                anyhow::bail!("Server exited with code {code}");
-            }
+        if let Some(code) = status.code()
+            && code != 130
+        {
+            anyhow::bail!("Server exited with code {code}");
         }
     }
 

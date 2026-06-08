@@ -41,7 +41,11 @@ impl RavelRequest {
         let query_params = req
             .uri()
             .query()
-            .map(|qs| url::form_urlencoded::parse(qs.as_bytes()).into_owned().collect())
+            .map(|qs| {
+                url::form_urlencoded::parse(qs.as_bytes())
+                    .into_owned()
+                    .collect()
+            })
             .unwrap_or_default();
 
         Self {
@@ -108,7 +112,7 @@ impl RavelRequest {
     /// Check whether the request expects a JSON response.
     pub fn wants_json(&self) -> bool {
         self.header("accept")
-            .map_or(false, |v| v.contains("application/json"))
+            .is_some_and(|v| v.contains("application/json"))
     }
 
     /// Return the raw inner Axum request (consumes self).
@@ -156,10 +160,7 @@ mod tests {
 
     #[test]
     fn test_empty_query() {
-        let req = Request::builder()
-            .uri("/test")
-            .body(Body::empty())
-            .unwrap();
+        let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
 
         let r = RavelRequest::new(req);
         assert!(r.queries().is_empty());

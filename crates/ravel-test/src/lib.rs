@@ -17,10 +17,10 @@
 //! assert!(resp.text().contains("Hello"));
 //! ```
 
+use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::response::Response;
-use axum::Router;
 use serde::de::DeserializeOwned;
 use tower::ServiceExt;
 
@@ -233,7 +233,7 @@ impl TestResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{routing::get, Json};
+    use axum::{Json, routing::get};
     use serde::Serialize;
 
     async fn hello() -> &'static str {

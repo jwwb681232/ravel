@@ -43,9 +43,8 @@ pub type Next = axum::middleware::Next;
 /// Type alias for a Ravel middleware function.
 ///
 /// Any async function `(Request, Next) -> Response` can be used as middleware.
-pub type MiddlewareFn = fn(Request, Next) -> std::pin::Pin<
-    Box<dyn std::future::Future<Output = Response> + Send>,
->;
+pub type MiddlewareFn =
+    fn(Request, Next) -> std::pin::Pin<Box<dyn std::future::Future<Output = Response> + Send>>;
 
 // ── Built-in middleware ───────────────────────────────────────────
 
@@ -73,7 +72,10 @@ pub async fn error_handler(req: Request, next: Next) -> Response {
                 error_response(StatusCode::INTERNAL_SERVER_ERROR, msg)
             }
         },
-        Err(_) => error_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error (panic)"),
+        Err(_) => error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal server error (panic)",
+        ),
     }
 }
 
@@ -152,9 +154,16 @@ impl CorsConfig {
     }
 
     /// Create a middleware function from this CORS config.
-    pub fn middleware(self) -> impl Fn(Request, Next) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Response> + Send>,
-    > + Clone + Send + Sync + 'static {
+    pub fn middleware(
+        self,
+    ) -> impl Fn(
+        Request,
+        Next,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Response> + Send>>
+    + Clone
+    + Send
+    + Sync
+    + 'static {
         move |req: Request, next: Next| {
             let this = self.clone();
             Box::pin(async move { this.handle(req, next).await })
@@ -260,9 +269,16 @@ where
     }
 
     /// Create a middleware function from this auth config.
-    pub fn middleware(self) -> impl Fn(Request, Next) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Response> + Send>,
-    > + Clone + Send + Sync + 'static {
+    pub fn middleware(
+        self,
+    ) -> impl Fn(
+        Request,
+        Next,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Response> + Send>>
+    + Clone
+    + Send
+    + Sync
+    + 'static {
         move |req: Request, next: Next| {
             let this = self.clone();
             Box::pin(async move { this.handle(req, next).await })
@@ -279,19 +295,14 @@ where
             .map(|s| s.to_string());
 
         match token {
-            Some(token) => {
-                match (self.validator)(token).await {
-                    Some(user_id) => {
-                        req.extensions_mut().insert(user_id);
-                        next.run(req).await
-                    }
-                    None => error_response(StatusCode::UNAUTHORIZED, "Invalid token"),
+            Some(token) => match (self.validator)(token).await {
+                Some(user_id) => {
+                    req.extensions_mut().insert(user_id);
+                    next.run(req).await
                 }
-            }
-            None => error_response(
-                StatusCode::UNAUTHORIZED,
-                "Missing Authorization header",
-            ),
+                None => error_response(StatusCode::UNAUTHORIZED, "Invalid token"),
+            },
+            None => error_response(StatusCode::UNAUTHORIZED, "Missing Authorization header"),
         }
     }
 }
@@ -301,10 +312,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::Router;
     use axum::body::Body;
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
-    use axum::Router;
     use axum::routing::get;
     use tower::ServiceExt;
 
@@ -326,17 +337,11 @@ mod tests {
             .route("/", get(hello_handler))
             .layer(axum::middleware::from_fn(add_header_middleware));
 
-        let req = Request::builder()
-            .uri("/")
-            .body(Body::empty())
-            .unwrap();
+        let req = Request::builder().uri("/").body(Body::empty()).unwrap();
 
         let response = app.oneshot(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get("X-Custom").unwrap(),
-            "ravel"
-        );
+        assert_eq!(response.headers().get("X-Custom").unwrap(), "ravel");
     }
 
     async fn reject_middleware(_req: Request, _next: Next) -> Response {
@@ -349,10 +354,7 @@ mod tests {
             .route("/", get(hello_handler))
             .layer(axum::middleware::from_fn(reject_middleware));
 
-        let req = Request::builder()
-            .uri("/")
-            .body(Body::empty())
-            .unwrap();
+        let req = Request::builder().uri("/").body(Body::empty()).unwrap();
 
         let response = app.oneshot(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
@@ -360,22 +362,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_cors_adds_headers() {
-        let cors = CorsConfig::new()
-            .allow_origin("http://localhost:3000");
+        let cors = CorsConfig::new().allow_origin("http://localhost:3000");
 
         let app = Router::new()
             .route("/", get(hello_handler))
             .layer(axum::middleware::from_fn(cors.middleware()));
 
-        let req = Request::builder()
-            .uri("/")
-            .body(Body::empty())
-            .unwrap();
+        let req = Request::builder().uri("/").body(Body::empty()).unwrap();
 
         let response = app.oneshot(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
-            response.headers().get("Access-Control-Allow-Origin").unwrap(),
+            response
+                .headers()
+                .get("Access-Control-Allow-Origin")
+                .unwrap(),
             "http://localhost:3000"
         );
     }
@@ -396,7 +397,11 @@ mod tests {
 
         let response = app.oneshot(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
-        assert!(response.headers().contains_key("Access-Control-Allow-Methods"));
+        assert!(
+            response
+                .headers()
+                .contains_key("Access-Control-Allow-Methods")
+        );
     }
 
     #[tokio::test]
@@ -405,10 +410,7 @@ mod tests {
             .route("/", get(hello_handler))
             .layer(axum::middleware::from_fn(log_requests));
 
-        let req = Request::builder()
-            .uri("/")
-            .body(Body::empty())
-            .unwrap();
+        let req = Request::builder().uri("/").body(Body::empty()).unwrap();
 
         let response = app.oneshot(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
@@ -464,10 +466,7 @@ mod tests {
             .route("/", get(hello_handler))
             .layer(axum::middleware::from_fn(auth.middleware()));
 
-        let req = Request::builder()
-            .uri("/")
-            .body(Body::empty())
-            .unwrap();
+        let req = Request::builder().uri("/").body(Body::empty()).unwrap();
 
         let response = app.oneshot(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);

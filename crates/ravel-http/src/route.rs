@@ -18,12 +18,12 @@
 //!     .build();
 //! ```
 
-use axum::routing;
 use axum::Router;
+use axum::routing;
 
 // Re-export useful axum types for convenience.
-pub use axum::extract::{Path, Query, State};
 pub use axum::Json;
+pub use axum::extract::{Path, Query, State};
 
 // ── Route ──────────────────────────────────────────────────────────
 
@@ -119,11 +119,7 @@ impl Route {
     ///     })
     ///     .build();
     /// ```
-    pub fn group(
-        mut self,
-        prefix: &str,
-        f: impl FnOnce(Route) -> Route,
-    ) -> Self {
+    pub fn group(mut self, prefix: &str, f: impl FnOnce(Route) -> Route) -> Self {
         let group_routes = f(Route::new());
         self.router = self.router.nest(prefix, group_routes.into_router());
         self
@@ -286,8 +282,7 @@ mod tests {
         let router = Route::new()
             .get("/", index)
             .group("/api", |api| {
-                api.get("/status", index)
-                    .post("/users", user_create)
+                api.get("/status", index).post("/users", user_create)
             })
             .build();
 
@@ -296,13 +291,9 @@ mod tests {
 
     #[test]
     fn test_merge_sub_router() {
-        let sub = Route::new()
-            .get("/ping", index)
-            .into_router();
+        let sub = Route::new().get("/ping", index).into_router();
 
-        let router = Route::new()
-            .merge("/v1", sub)
-            .build();
+        let router = Route::new().merge("/v1", sub).build();
 
         let _ = router;
     }

@@ -15,9 +15,10 @@
 //! ```
 
 use anyhow::{Context, Result};
+#[allow(unused_imports)]
 use serde::{Deserialize, Serialize};
-use sha2::digest::KeyInit;
 use sha2::Sha256;
+use sha2::digest::KeyInit;
 
 /// JWT helper — sign and verify HS256 tokens.
 pub struct Jwt {
@@ -35,9 +36,7 @@ impl Jwt {
     /// Encode claims into a JWT string (header.payload.signature).
     pub fn encode<T: Serialize>(&self, claims: &T) -> Result<String> {
         let header = base64url(br#"{"alg":"HS256","typ":"JWT"}"#);
-        let payload = base64url(
-            &serde_json::to_vec(claims).context("Failed to serialize claims")?,
-        );
+        let payload = base64url(&serde_json::to_vec(claims).context("Failed to serialize claims")?);
         let signature = self.sign(&header, &payload);
         Ok(format!("{header}.{payload}.{signature}"))
     }

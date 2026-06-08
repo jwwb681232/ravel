@@ -132,8 +132,7 @@ impl ConnectionManager {
             .with_context(|| format!("Reading {}", file.display()))?;
 
         let map: HashMap<String, DatabaseConfig> =
-            toml::from_str(&content)
-                .with_context(|| format!("Parsing {}", file.display()))?;
+            toml::from_str(&content).with_context(|| format!("Parsing {}", file.display()))?;
 
         Ok(Self {
             configs: map,

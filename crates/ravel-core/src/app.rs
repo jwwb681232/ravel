@@ -132,23 +132,14 @@ impl Application {
     ///
     /// If the application has already been booted the provider is
     /// registered **and** booted immediately.
-    pub fn register_provider<P: ServiceProvider + 'static>(
-        mut self,
-        provider: P,
-    ) -> Self {
+    pub fn register_provider<P: ServiceProvider + 'static>(mut self, provider: P) -> Self {
         if self.booted {
             // Late registration — register + boot immediately.
             if let Err(e) = provider.register(&self.container) {
-                log::error!(
-                    "Error registering provider `{}`: {e}",
-                    provider.name()
-                );
+                log::error!("Error registering provider `{}`: {e}", provider.name());
             }
             if let Err(e) = provider.boot(&self.container) {
-                log::error!(
-                    "Error booting provider `{}`: {e}",
-                    provider.name()
-                );
+                log::error!("Error booting provider `{}`: {e}", provider.name());
             }
         }
         self.providers.push(Box::new(provider));
@@ -176,26 +167,16 @@ impl Application {
 
         // Phase 1 — register
         for provider in &self.providers {
-            provider
-                .register(&self.container)
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "Error registering provider `{}`: {e}",
-                        provider.name()
-                    )
-                })?;
+            provider.register(&self.container).map_err(|e| {
+                anyhow::anyhow!("Error registering provider `{}`: {e}", provider.name())
+            })?;
         }
 
         // Phase 2 — boot
         for provider in &self.providers {
-            provider
-                .boot(&self.container)
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "Error booting provider `{}`: {e}",
-                        provider.name()
-                    )
-                })?;
+            provider.boot(&self.container).map_err(|e| {
+                anyhow::anyhow!("Error booting provider `{}`: {e}", provider.name())
+            })?;
         }
 
         self.booted = true;
@@ -274,15 +255,13 @@ mod tests {
 
     impl ServiceProvider for ProviderA {
         fn register(&self, c: &Container) -> Result<()> {
-            self.call_order
-                .fetch_add(1, Ordering::SeqCst);
+            self.call_order.fetch_add(1, Ordering::SeqCst);
             c.instance("Registered A".to_string());
             Ok(())
         }
 
         fn boot(&self, c: &Container) -> Result<()> {
-            self.call_order
-                .fetch_add(1, Ordering::SeqCst);
+            self.call_order.fetch_add(1, Ordering::SeqCst);
             let _val: std::sync::Arc<String> = c.resolve().unwrap();
             Ok(())
         }
@@ -290,16 +269,14 @@ mod tests {
 
     impl ServiceProvider for ProviderB {
         fn register(&self, c: &Container) -> Result<()> {
-            self.call_order
-                .fetch_add(10, Ordering::SeqCst);
+            self.call_order.fetch_add(10, Ordering::SeqCst);
             // Should be able to see what A registered (register runs before boot).
             let _val: std::sync::Arc<String> = c.resolve().unwrap();
             Ok(())
         }
 
         fn boot(&self, _c: &Container) -> Result<()> {
-            self.call_order
-                .fetch_add(10, Ordering::SeqCst);
+            self.call_order.fetch_add(10, Ordering::SeqCst);
             Ok(())
         }
     }
@@ -347,11 +324,7 @@ mod tests {
         writeln!(f, "APP_ENV=testing").unwrap();
         drop(f);
 
-        let app = Application::new()
-            .load_env(&dir)
-            .unwrap()
-            .boot()
-            .unwrap();
+        let app = Application::new().load_env(&dir).unwrap().boot().unwrap();
 
         let env: std::sync::Arc<EnvRepo> = app.container().resolve().unwrap();
         assert_eq!(env.get("APP_ENV"), Some("testing"));

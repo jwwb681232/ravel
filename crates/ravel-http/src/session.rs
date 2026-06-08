@@ -173,10 +173,8 @@ where
 
             // If session was modified, set the cookie
             if let Some(_modified) = resp.extensions().get::<bool>() {
-                resp.headers_mut().insert(
-                    "Set-Cookie",
-                    set_cookie.parse().unwrap(),
-                );
+                resp.headers_mut()
+                    .insert("Set-Cookie", set_cookie.parse().unwrap());
             }
 
             Ok(resp)
@@ -257,10 +255,7 @@ impl<S: Send + Sync + 'static> FromRequestParts<S> for Session {
             .get::<SessionData>()
             .cloned()
             .unwrap_or_default();
-        Ok(Session {
-            data,
-            dirty: false,
-        })
+        Ok(Session { data, dirty: false })
     }
 }
 
@@ -282,8 +277,7 @@ mod tests {
         let config = SessionConfig::new(test_crypt());
 
         let mut data = SessionData::default();
-        data.values
-            .insert("user_id".into(), serde_json::json!(42));
+        data.values.insert("user_id".into(), serde_json::json!(42));
 
         let cookie = config.write(&data);
 

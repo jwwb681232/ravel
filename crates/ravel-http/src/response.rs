@@ -96,15 +96,17 @@ impl ResponseBuilder {
         code: StatusCode,
         data: T,
     ) -> Result<Response<Body>, serde_json::Error> {
-        Ok(ResponseBuilder::new().status(code).json(data)?.into_response())
+        Ok(ResponseBuilder::new()
+            .status(code)
+            .json(data)?
+            .into_response())
     }
 
     /// Build a redirect (302 Found) to `url`.
     pub fn redirect(url: &str) -> Response<Body> {
         let mut resp = Response::new(Body::empty());
         *resp.status_mut() = StatusCode::FOUND;
-        resp.headers_mut()
-            .insert("Location", url.parse().unwrap());
+        resp.headers_mut().insert("Location", url.parse().unwrap());
         resp
     }
 
@@ -112,15 +114,13 @@ impl ResponseBuilder {
     pub fn redirect_permanent(url: &str) -> Response<Body> {
         let mut resp = Response::new(Body::empty());
         *resp.status_mut() = StatusCode::MOVED_PERMANENTLY;
-        resp.headers_mut()
-            .insert("Location", url.parse().unwrap());
+        resp.headers_mut().insert("Location", url.parse().unwrap());
         resp
     }
 
     /// Finalise and produce an Axum [`Response`].
     pub fn build(self) -> Result<Response<Body>, String> {
-        self.body
-            .ok_or_else(|| "No body set on response".into())
+        self.body.ok_or_else(|| "No body set on response".into())
     }
 }
 

@@ -22,9 +22,9 @@ pub trait Cache: Send + Sync {
     fn put(&self, key: &str, value: Box<dyn Any + Send + Sync>, ttl: Option<Duration>);
 
     /// Retrieve a typed value by key.
-    fn get<T: 'static>(&self, key: &str) -> Option<T>
+    fn get<T>(&self, key: &str) -> Option<T>
     where
-        T: Clone + Send + Sync;
+        T: 'static + Clone + Send + Sync;
 
     /// Check whether a key exists.
     fn has(&self, key: &str) -> bool;
@@ -48,6 +48,12 @@ pub struct MemoryCache {
     store: Mutex<HashMap<String, CacheEntry>>,
 }
 
+impl Default for MemoryCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryCache {
     pub fn new() -> Self {
         Self {
@@ -57,7 +63,7 @@ impl MemoryCache {
 
     fn evict_expired(store: &mut HashMap<String, CacheEntry>) {
         let now = Instant::now();
-        store.retain(|_, entry| entry.expires_at.map_or(true, |t| t > now));
+        store.retain(|_, entry| entry.expires_at.is_none_or(|t| t > now));
     }
 }
 
@@ -68,16 +74,16 @@ impl Cache for MemoryCache {
         store.insert(key.to_string(), CacheEntry { value, expires_at });
     }
 
-    fn get<T: 'static>(&self, key: &str) -> Option<T>
+    fn get<T>(&self, key: &str) -> Option<T>
     where
-        T: Clone + Send + Sync,
+        T: 'static + Clone + Send + Sync,
     {
         let mut store = self.store.lock().unwrap();
         Self::evict_expired(&mut store);
 
-        store.get(key).and_then(|entry| {
-            entry.value.downcast_ref::<T>().cloned()
-        })
+        store
+            .get(key)
+            .and_then(|entry| entry.value.downcast_ref::<T>().cloned())
     }
 
     fn has(&self, key: &str) -> bool {

@@ -25,8 +25,8 @@
 //! }
 //! ```
 
-use axum::response::IntoResponse;
 use crate::session::Session;
+use axum::response::IntoResponse;
 
 /// Authentication helper — stateless methods for session-based auth.
 pub struct Auth;
@@ -73,11 +73,15 @@ impl Auth {
 pub struct AuthGuard;
 
 impl AuthGuard {
-    pub fn middleware(
-    ) -> impl Fn(axum::extract::Request, axum::middleware::Next) ->
-        std::pin::Pin<Box<dyn std::future::Future<Output = axum::response::Response> + Send>>
-        + Clone + Send + Sync + 'static
-    {
+    pub fn middleware() -> impl Fn(
+        axum::extract::Request,
+        axum::middleware::Next,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = axum::response::Response> + Send>,
+    > + Clone
+    + Send
+    + Sync
+    + 'static {
         |req: axum::extract::Request, next: axum::middleware::Next| {
             Box::pin(async move {
                 let jar = crate::cookie::CookieJar::parse(

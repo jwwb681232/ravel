@@ -14,7 +14,7 @@
 //! - `{{kebab}}` — kebab-case version
 //! - `{{timestamp}}` — current UTC timestamp (for migrations)
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -33,21 +33,30 @@ impl Generator {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         let mut tera = Tera::default();
         // Register all built-in templates
-        tera.add_raw_template("controller", CONTROLLER_TEMPLATE).unwrap();
-        tera.add_raw_template("middleware", MIDDLEWARE_TEMPLATE).unwrap();
-        tera.add_raw_template("migration", MIGRATION_TEMPLATE).unwrap();
+        tera.add_raw_template("controller", CONTROLLER_TEMPLATE)
+            .unwrap();
+        tera.add_raw_template("middleware", MIDDLEWARE_TEMPLATE)
+            .unwrap();
+        tera.add_raw_template("migration", MIGRATION_TEMPLATE)
+            .unwrap();
         tera.add_raw_template("seeder", SEEDER_TEMPLATE).unwrap();
-        tera.add_raw_template("provider", PROVIDER_TEMPLATE).unwrap();
+        tera.add_raw_template("provider", PROVIDER_TEMPLATE)
+            .unwrap();
         tera.add_raw_template("request", REQUEST_TEMPLATE).unwrap();
         tera.add_raw_template("model", MODEL_TEMPLATE).unwrap();
         tera.add_raw_template("job", JOB_TEMPLATE).unwrap();
-        tera.add_raw_template("cargo_toml", CARGO_TOML_TEMPLATE).unwrap();
+        tera.add_raw_template("cargo_toml", CARGO_TOML_TEMPLATE)
+            .unwrap();
         tera.add_raw_template("main_rs", MAIN_RS_TEMPLATE).unwrap();
-        tera.add_raw_template("app_toml", APP_TOML_TEMPLATE).unwrap();
+        tera.add_raw_template("app_toml", APP_TOML_TEMPLATE)
+            .unwrap();
         tera.add_raw_template("env", ENV_TEMPLATE).unwrap();
-        tera.add_raw_template("migrator", MIGRATOR_TEMPLATE).unwrap();
-        tera.add_raw_template("migrate_bin", MIGRATE_BIN_TEMPLATE).unwrap();
-        tera.add_raw_template("seed_bin", SEED_BIN_TEMPLATE).unwrap();
+        tera.add_raw_template("migrator", MIGRATOR_TEMPLATE)
+            .unwrap();
+        tera.add_raw_template("migrate_bin", MIGRATE_BIN_TEMPLATE)
+            .unwrap();
+        tera.add_raw_template("seed_bin", SEED_BIN_TEMPLATE)
+            .unwrap();
         Self {
             root: root.into(),
             tera,
@@ -198,10 +207,7 @@ impl Generator {
         }
 
         // Cargo.toml
-        self.overwrite_file(
-            "Cargo.toml",
-            &self.render("cargo_toml", project_name)?,
-        )?;
+        self.overwrite_file("Cargo.toml", &self.render("cargo_toml", project_name)?)?;
 
         // src/main.rs
         self.overwrite_file("src/main.rs", &self.render("main_rs", project_name)?)?;
@@ -240,8 +246,8 @@ impl Generator {
 
 fn to_snake(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 4);
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
+    let chars = s.chars().peekable();
+    for c in chars {
         if c.is_uppercase() {
             if !out.is_empty() {
                 out.push('_');
@@ -630,7 +636,8 @@ mod tests {
         let g = Generator::new(&tmp);
         g.scaffold_controller("UserController").unwrap();
 
-        let content = std::fs::read_to_string(tmp.join("app/Http/Controllers/UserController.rs")).unwrap();
+        let content =
+            std::fs::read_to_string(tmp.join("app/Http/Controllers/UserController.rs")).unwrap();
         assert!(content.contains("pub struct UserController"));
         assert!(content.contains("impl Controller for UserController"));
 
@@ -645,7 +652,8 @@ mod tests {
         let g = Generator::new(&tmp);
         g.scaffold_middleware("AuthMiddleware").unwrap();
 
-        let content = std::fs::read_to_string(tmp.join("app/Http/Middleware/AuthMiddleware.rs")).unwrap();
+        let content =
+            std::fs::read_to_string(tmp.join("app/Http/Middleware/AuthMiddleware.rs")).unwrap();
         assert!(content.contains("pub struct AuthMiddleware"));
 
         let _ = std::fs::remove_dir_all(&tmp);
@@ -696,7 +704,8 @@ mod tests {
         let g = Generator::new(&tmp);
         g.scaffold_provider("RouteServiceProvider").unwrap();
 
-        let content = std::fs::read_to_string(tmp.join("app/Providers/RouteServiceProvider.rs")).unwrap();
+        let content =
+            std::fs::read_to_string(tmp.join("app/Providers/RouteServiceProvider.rs")).unwrap();
         assert!(content.contains("impl ServiceProvider for RouteServiceProvider"));
         assert!(content.contains("fn register"));
         assert!(content.contains("fn boot"));
@@ -712,7 +721,8 @@ mod tests {
         let g = Generator::new(&tmp);
         g.scaffold_request("LoginRequest").unwrap();
 
-        let content = std::fs::read_to_string(tmp.join("app/Http/Requests/LoginRequest.rs")).unwrap();
+        let content =
+            std::fs::read_to_string(tmp.join("app/Http/Requests/LoginRequest.rs")).unwrap();
         assert!(content.contains("pub struct LoginRequest"));
         assert!(content.contains("impl FormRequest for LoginRequest"));
         assert!(content.contains("fn rules"));

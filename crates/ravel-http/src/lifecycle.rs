@@ -56,10 +56,7 @@ pub async fn request_timer(req: Request, next: Next) -> Response {
 
     let duration = start.elapsed();
     let status = resp.status();
-    info!(
-        "{method} {path} → {status} ({:.2?})",
-        duration
-    );
+    info!("{method} {path} → {status} ({:.2?})", duration);
     resp
 }
 
@@ -110,9 +107,12 @@ impl<S: Send + Sync + 'static> axum::extract::FromRequestParts<S> for RequestId 
 ///     tracing::info!("Completed: {}", resp.status());
 /// });
 /// ```
+type BeforeHook = dyn Fn(&Request) + Send + Sync;
+type AfterHook = dyn Fn(&Request, &Response) + Send + Sync;
+
 pub struct LifecycleHooks {
-    before_hooks: Vec<Arc<dyn Fn(&Request) + Send + Sync>>,
-    after_hooks: Vec<Arc<dyn Fn(&Request, &Response) + Send + Sync>>,
+    before_hooks: Vec<Arc<BeforeHook>>,
+    after_hooks: Vec<Arc<AfterHook>>,
 }
 
 impl LifecycleHooks {
@@ -139,8 +139,7 @@ impl LifecycleHooks {
     ) -> impl Fn(
         Request,
         Next,
-    )
-        -> std::pin::Pin<Box<dyn std::future::Future<Output = Response> + Send>>
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Response> + Send>>
     + Clone
     + Send
     + Sync
@@ -199,10 +198,7 @@ mod tests {
         });
 
         // Run the hook
-        let req = Request::builder()
-            .uri("/test")
-            .body(Body::empty())
-            .unwrap();
+        let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
         for hook in &hooks.before_hooks {
             hook(&req);
         }

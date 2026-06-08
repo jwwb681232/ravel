@@ -46,7 +46,9 @@ impl View {
     pub fn new(templates_dir: impl AsRef<Path>) -> Result<Self, tera::Error> {
         let pattern = templates_dir.as_ref().join("**/*");
         let tera = Tera::new(pattern.to_str().unwrap_or("templates/**/*"))?;
-        Ok(Self { tera: Arc::new(tera) })
+        Ok(Self {
+            tera: Arc::new(tera),
+        })
     }
 
     /// Render a template by name (relative to templates dir, without extension).
@@ -66,21 +68,13 @@ impl View {
     ///     view.render_html("home", &context! { "title" => "Welcome" })
     /// }
     /// ```
-    pub fn render_html(
-        &self,
-        template: &str,
-        ctx: &Context,
-    ) -> Result<Html<String>, tera::Error> {
+    pub fn render_html(&self, template: &str, ctx: &Context) -> Result<Html<String>, tera::Error> {
         let html = self.render(template, ctx)?;
         Ok(Html(html))
     }
 
     /// Render and return an Axum `Response` (for use as `impl IntoResponse`).
-    pub fn render_response(
-        &self,
-        template: &str,
-        ctx: &Context,
-    ) -> Result<Response, tera::Error> {
+    pub fn render_response(&self, template: &str, ctx: &Context) -> Result<Response, tera::Error> {
         let html = self.render(template, ctx)?;
         Ok(Html(html).into_response())
     }
@@ -121,11 +115,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
 
-        std::fs::write(
-            tmp.join("hello.html"),
-            "<h1>Hello, {{ name }}!</h1>",
-        )
-        .unwrap();
+        std::fs::write(tmp.join("hello.html"), "<h1>Hello, {{ name }}!</h1>").unwrap();
 
         let view = View::new(&tmp).unwrap();
         let ctx = context! { "name" => "Ravel" };

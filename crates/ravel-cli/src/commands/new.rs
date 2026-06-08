@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use ravel_generator::Generator;
 use std::path::Path;
 

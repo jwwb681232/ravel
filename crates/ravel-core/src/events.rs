@@ -27,8 +27,8 @@
 //! dispatcher.dispatch(&UserCreated { name: "Bob".into() });
 //! ```
 
-use std::collections::HashMap;
 use std::any::TypeId;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Marker trait for event payloads.  
@@ -46,9 +46,12 @@ pub struct EventDispatcher {
     listeners: HashMap<TypeId, Vec<Arc<ErasedListener>>>,
 }
 
+/// Type-erased handler function signature.
+type ErasedHandler = dyn Fn(&(dyn std::any::Any + Send + Sync)) + Send + Sync;
+
 /// Type-erased listener — wraps a closure so we don't need generics here.
 struct ErasedListener {
-    handle: Box<dyn Fn(&(dyn std::any::Any + Send + Sync)) + Send + Sync>,
+    handle: Box<ErasedHandler>,
 }
 
 impl ErasedListener {
@@ -142,14 +145,17 @@ mod tests {
     }
     impl Listener<OrderPlaced> for OrderLogger {
         fn handle(&self, e: &OrderPlaced) {
-            self.counter.fetch_add(e.order_id as usize, Ordering::SeqCst);
+            self.counter
+                .fetch_add(e.order_id as usize, Ordering::SeqCst);
         }
     }
 
     #[test]
     fn test_dispatch_to_single_listener() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let logger = OrderLogger { counter: counter.clone() };
+        let logger = OrderLogger {
+            counter: counter.clone(),
+        };
 
         let mut d = EventDispatcher::new();
         d.listen(OrderPlaced { order_id: 0 }, Arc::new(logger));
@@ -163,8 +169,18 @@ mod tests {
         let counter = Arc::new(AtomicUsize::new(0));
 
         let mut d = EventDispatcher::new();
-        d.listen(OrderPlaced { order_id: 0 }, Arc::new(OrderLogger { counter: counter.clone() }));
-        d.listen(OrderPlaced { order_id: 0 }, Arc::new(OrderLogger { counter: counter.clone() }));
+        d.listen(
+            OrderPlaced { order_id: 0 },
+            Arc::new(OrderLogger {
+                counter: counter.clone(),
+            }),
+        );
+        d.listen(
+            OrderPlaced { order_id: 0 },
+            Arc::new(OrderLogger {
+                counter: counter.clone(),
+            }),
+        );
 
         d.dispatch(&OrderPlaced { order_id: 10 }); // 10 + 10 = 20
 
@@ -175,7 +191,12 @@ mod tests {
     fn test_forget_removes_listeners() {
         let counter = Arc::new(AtomicUsize::new(0));
         let mut d = EventDispatcher::new();
-        d.listen(OrderPlaced { order_id: 0 }, Arc::new(OrderLogger { counter: counter.clone() }));
+        d.listen(
+            OrderPlaced { order_id: 0 },
+            Arc::new(OrderLogger {
+                counter: counter.clone(),
+            }),
+        );
         d.forget::<OrderPlaced>();
         d.dispatch(&OrderPlaced { order_id: 100 });
         assert_eq!(counter.load(Ordering::SeqCst), 0);

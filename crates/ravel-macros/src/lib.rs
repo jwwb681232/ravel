@@ -6,7 +6,7 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput, LitStr};
+use syn::{DeriveInput, LitStr, parse_macro_input};
 
 /// Derive macro that implements the `Job` trait.
 ///
@@ -82,8 +82,8 @@ pub fn derive_job(input: TokenStream) -> TokenStream {
 /// Convert `CamelCase` or `PascalCase` to `snake_case`.
 fn camel_to_snake(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 4);
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
+    let chars = s.chars().peekable();
+    for c in chars {
         if c.is_uppercase() {
             if !out.is_empty() && !out.ends_with('_') {
                 out.push('_');
