@@ -1,0 +1,19 @@
+name: Publish to crates.io
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    name: Publish all crates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish crates
+        run: bash scripts/publish.sh --live
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
