@@ -10,6 +10,7 @@ members = [
     "crates/ravel-generator",
     "crates/ravel-macros",
     "crates/ravel-support",
+    "crates/ravel-facades",
     "crates/ravel-test",
     "testblog"
 ]
