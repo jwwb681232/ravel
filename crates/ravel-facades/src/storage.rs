@@ -1,18 +1,29 @@
+//! Storage facade — file storage abstraction.
 use anyhow::Result;
+use ravel_support::storage::{LocalDisk, Storage as StorageFacade};
+use std::sync::OnceLock;
 
 pub struct Storage;
 
 impl Storage {
-    pub fn put(_path: &str, _contents: &[u8]) -> Result<()> {
-        unimplemented!()
+    fn disk() -> &'static LocalDisk {
+        static DISK: OnceLock<LocalDisk> = OnceLock::new();
+        DISK.get_or_init(|| LocalDisk::new("storage"))
     }
-    pub fn get(_path: &str) -> Result<Vec<u8>> {
-        unimplemented!()
+
+    pub fn put(path: &str, contents: &[u8]) -> Result<()> {
+        StorageFacade::put(Self::disk(), path, contents)
     }
-    pub fn exists(_path: &str) -> bool {
-        unimplemented!()
+
+    pub fn get(path: &str) -> Result<Vec<u8>> {
+        StorageFacade::get(Self::disk(), path)
     }
-    pub fn delete(_path: &str) -> Result<()> {
-        unimplemented!()
+
+    pub fn exists(path: &str) -> bool {
+        StorageFacade::exists(Self::disk(), path)
+    }
+
+    pub fn delete(path: &str) -> Result<()> {
+        StorageFacade::delete(Self::disk(), path)
     }
 }

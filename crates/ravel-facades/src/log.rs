@@ -1,5 +1,4 @@
+//! Log facade — re-exports tracing macros.
 pub struct Log;
 
-impl Log {
-    // tracing macros will be re-exported later
-}
+pub use ravel_core::log::{debug, error, info, trace, warn};
