@@ -6,7 +6,9 @@ members = [
     "crates/ravel-core",
     "crates/ravel-db",
     "crates/ravel-http",
-    "crates/ravel-generator"
+    "crates/ravel-generator",
+    "crates/ravel-support",
+    "crates/ravel-test"
 ]
 
 resolver = "2"

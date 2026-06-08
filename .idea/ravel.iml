@@ -7,6 +7,8 @@
       <sourceFolder url="file://$MODULE_DIR$/crates/ravel-db/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/ravel-generator/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/ravel-http/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ravel-support/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ravel-test/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />
