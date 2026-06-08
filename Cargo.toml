@@ -1,0 +1,11 @@
+# Cargo.toml
+
+[workspace]
+members = [
+    "crates/ravel-cli",
+    "crates/ravel-core",
+    "crates/ravel-http",
+    "crates/ravel-generator"
+]
+
+resolver = "2"
