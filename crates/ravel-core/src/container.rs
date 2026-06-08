@@ -1,28 +1,27 @@
-//! Ravel Service Container — a lightweight Dependency Injection container.
+//! Ravel Service Container — a lightweight, thread-safe Dependency Injection container.
 //!
 //! Inspired by Laravel's service container, it provides:
 //! - Binding concrete types (singleton, transient, or pre-built instances)
 //! - Lazy resolution via factory closures that receive the container itself
 //! - Trait-object bindings via the "key type" idiom
-//!
-//! Uses interior mutability ([`RefCell`]) so that `resolve` can hand out
-//! shared references (`&T`) while still allowing lazy materialisation of
-//! singletons behind the scenes.
+//! - A [`freeze()`](Container::freeze) method that locks the container for read-only
+//!   access after bootstrap, making it safe for concurrent resolution in Axum.
 //!
 //! # Concrete-type bindings
 //!
 //! ```rust
 //! use ravel_core::container::Container;
+//! use std::sync::Arc;
 //!
 //! #[derive(Debug, PartialEq)]
 //! struct AppConfig { name: String }
 //!
 //! let c = Container::new();
 //!
-//! // Singleton — resolved once, same reference every time
+//! // Singleton — resolved once, same Arc every time
 //! c.singleton(|_| AppConfig { name: "MyApp".into() });
 //!
-//! let config: &AppConfig = c.resolve().unwrap();
+//! let config: Arc<AppConfig> = c.resolve().unwrap();
 //! assert_eq!(config.name, "MyApp");
 //! ```
 //!
@@ -51,9 +50,11 @@
 //! ```
 
 use std::any::{Any, TypeId};
-use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
+use parking_lot::RwLock;
 
 // ---------------------------------------------------------------------------
 // FactoryFn — type alias for the stored factory callable
@@ -73,6 +74,8 @@ enum Entry {
     SingletonFactory(FactoryFn),
 
     /// A fully materialised value (pre-built or resolved singleton).
+    /// Stored as `Box<dyn Any>`; singleton/instance values are wrapped in
+    /// `Arc<T>` so that `resolve()` can cheaply clone the pointer.
     Instance(Box<dyn Any + Send + Sync>),
 }
 
@@ -82,17 +85,46 @@ enum Entry {
 
 /// The service container.
 ///
-/// All mutation happens through [`RefCell`] so that `resolve` can take
-/// `&self` while still lazily materialising singletons.
+/// Uses [`parking_lot::RwLock`] for thread-safe access.  After calling
+/// [`freeze()`](Container::freeze), all write operations will panic, but
+/// `resolve` can be called concurrently from multiple threads.
 pub struct Container {
-    entries: RefCell<HashMap<TypeId, Entry>>,
+    entries: RwLock<HashMap<TypeId, Entry>>,
+    frozen: AtomicBool,
 }
 
 impl Container {
     pub fn new() -> Self {
         Self {
-            entries: RefCell::new(HashMap::new()),
+            entries: RwLock::new(HashMap::new()),
+            frozen: AtomicBool::new(false),
         }
+    }
+
+    // ── Freeze ──────────────────────────────────────────────────────
+
+    /// Freeze the container, preventing any further writes.
+    ///
+    /// After freezing, `resolve` can be called safely from multiple threads
+    /// (read lock only).  All write methods (`singleton`, `instance`, `bind`,
+    /// `bind_trait`, `forget`, `flush`) will **panic** if called after freeze.
+    ///
+    /// This is called automatically by [`Application::boot()`].
+    pub fn freeze(&self) {
+        self.frozen.store(true, Ordering::SeqCst);
+    }
+
+    /// Check whether the container has been frozen.
+    pub fn is_frozen(&self) -> bool {
+        self.frozen.load(Ordering::SeqCst)
+    }
+
+    /// Panic if the container is frozen (called by write operations).
+    fn assert_not_frozen(&self) {
+        assert!(
+            !self.frozen.load(Ordering::SeqCst),
+            "Container is frozen — cannot mutate after boot()"
+        );
     }
 
     // ── Singleton ───────────────────────────────────────────────────
@@ -100,14 +132,15 @@ impl Container {
     /// Register a singleton factory.
     ///
     /// # Panics
-    /// Panics if a binding for `T` already exists.
+    /// Panics if a binding for `T` already exists or if the container is frozen.
     pub fn singleton<T, F>(&self, factory: F)
     where
         T: Send + Sync + 'static,
         F: Fn(&Container) -> T + Send + Sync + 'static,
     {
+        self.assert_not_frozen();
         let key = TypeId::of::<T>();
-        let mut entries = self.entries.borrow_mut();
+        let mut entries = self.entries.write();
         assert!(
             !entries.contains_key(&key),
             "Container: a binding for `{}` already exists",
@@ -123,30 +156,32 @@ impl Container {
         T: Send + Sync + 'static,
         F: Fn(&Container) -> T + Send + Sync + 'static,
     {
+        self.assert_not_frozen();
         let f: FactoryFn = Arc::new(move |c| Box::new(factory(c)));
         self.entries
-            .borrow_mut()
+            .write()
             .insert(TypeId::of::<T>(), Entry::SingletonFactory(f));
     }
 
     // ── Instance (pre-built) ────────────────────────────────────────
 
-    /// Register an already-constructed value.
+    /// Register an already-constructed value, wrapped in `Arc<T>` internally.
     ///
     /// # Panics
-    /// Panics if a binding for `T` already exists.
+    /// Panics if a binding for `T` already exists or if the container is frozen.
     pub fn instance<T>(&self, value: T)
     where
         T: Send + Sync + 'static,
     {
+        self.assert_not_frozen();
         let key = TypeId::of::<T>();
-        let mut entries = self.entries.borrow_mut();
+        let mut entries = self.entries.write();
         assert!(
             !entries.contains_key(&key),
             "Container: a binding for `{}` already exists",
             std::any::type_name::<T>()
         );
-        entries.insert(key, Entry::Instance(Box::new(value)));
+        entries.insert(key, Entry::Instance(Box::new(Arc::new(value))));
     }
 
     /// Like [`instance`] but overwrites any existing binding.
@@ -154,9 +189,10 @@ impl Container {
     where
         T: Send + Sync + 'static,
     {
+        self.assert_not_frozen();
         self.entries
-            .borrow_mut()
-            .insert(TypeId::of::<T>(), Entry::Instance(Box::new(value)));
+            .write()
+            .insert(TypeId::of::<T>(), Entry::Instance(Box::new(Arc::new(value))));
     }
 
     // ── Transient factory ───────────────────────────────────────────
@@ -165,14 +201,15 @@ impl Container {
     /// new value.
     ///
     /// # Panics
-    /// Panics if a binding for `T` already exists.
+    /// Panics if a binding for `T` already exists or if the container is frozen.
     pub fn bind<T, F>(&self, factory: F)
     where
         T: Send + Sync + 'static,
         F: Fn(&Container) -> T + Send + Sync + 'static,
     {
+        self.assert_not_frozen();
         let key = TypeId::of::<T>();
-        let mut entries = self.entries.borrow_mut();
+        let mut entries = self.entries.write();
         assert!(
             !entries.contains_key(&key),
             "Container: a binding for `{}` already exists",
@@ -188,60 +225,70 @@ impl Container {
         T: Send + Sync + 'static,
         F: Fn(&Container) -> T + Send + Sync + 'static,
     {
+        self.assert_not_frozen();
         let f: FactoryFn = Arc::new(move |c| Box::new(factory(c)));
         self.entries
-            .borrow_mut()
+            .write()
             .insert(TypeId::of::<T>(), Entry::Factory(f));
     }
 
     // ── Resolution ──────────────────────────────────────────────────
 
-    /// Resolve a singleton or instance binding, returning a shared reference.
+    /// Resolve a singleton or instance binding, returning an `Arc<T>`.
+    ///
+    /// The first call on a singleton factory will materialise the value;
+    /// subsequent calls return a cheap `Arc::clone`.
     ///
     /// Returns `None` when:
     /// - No binding exists for `T`
-    /// - The binding is transient (use [`resolve_fresh`] instead)
-    pub fn resolve<T: Send + Sync + 'static>(&self) -> Option<&T> {
+    /// - The binding is transient (use [`resolve_fresh`](Self::resolve_fresh) instead)
+    pub fn resolve<T: Send + Sync + 'static>(&self) -> Option<Arc<T>> {
         let key = TypeId::of::<T>();
 
-        // Materialise singleton factory if needed.
+        // Check if we need to materialise a singleton factory.
         let needs_materialise = {
-            let entries = self.entries.borrow();
-            matches!(
-                entries.get(&key),
-                None | Some(Entry::SingletonFactory(_))
-            )
+            let entries = self.entries.read();
+            matches!(entries.get(&key), Some(Entry::SingletonFactory(_)))
         };
 
         if needs_materialise {
-            let mut entries = self.entries.borrow_mut();
-            if let Some(entry) = entries.remove(&key) {
-                match entry {
-                    Entry::SingletonFactory(f) => {
-                        // Drop borrow before calling factory (it may call back into the container).
-                        drop(entries);
-                        let instance: Box<dyn Any + Send + Sync> = f(self);
-                        self.entries
-                            .borrow_mut()
-                            .insert(key, Entry::Instance(instance));
+            // Take the factory out, invoke it, put the Instance back.
+            let factory = {
+                let mut entries = self.entries.write();
+                match entries.remove(&key)? {
+                    Entry::SingletonFactory(f) => f,
+                    other => {
+                        entries.insert(key, other);
+                        // Fall through to read below
+                        return self.read_instance::<T>();
                     }
-                    Entry::Factory(f) => {
-                        entries.insert(key, Entry::Factory(f));
-                        return None;
-                    }
-                    _ => {}
                 }
+            };
+
+            // Invoke factory WITHOUT holding any lock (it may call back into the container).
+            let raw: Box<dyn Any + Send + Sync> = factory(self);
+
+            // Unpack the raw value as T, wrap in Arc<T>, and store.
+            let mut entries = self.entries.write();
+            match raw.downcast::<T>() {
+                Ok(typed) => {
+                    let arc: Arc<T> = Arc::from(*typed);
+                    entries.insert(key, Entry::Instance(Box::new(arc)));
+                }
+                Err(_) => return None, // type mismatch — should not happen
             }
         }
 
-        // Retrieve the (now) Instance.
-        // SAFETY: we extend the reference lifetime beyond the Ref-borrow-guard
-        // because the Box<dyn Any> lives in the Container, which outlives &self.
-        let entries = self.entries.borrow();
-        match entries.get(&key) {
-            Some(Entry::Instance(boxed)) => {
-                let ptr: *const T = boxed.downcast_ref::<T>()?;
-                Some(unsafe { &*ptr })
+        self.read_instance::<T>()
+    }
+
+    /// Read an already-materialised Instance from the map, returning `Arc<T>`.
+    fn read_instance<T: Send + Sync + 'static>(&self) -> Option<Arc<T>> {
+        let entries = self.entries.read();
+        match entries.get(&TypeId::of::<T>())? {
+            Entry::Instance(boxed) => {
+                let arc_ref: &Arc<T> = boxed.downcast_ref::<Arc<T>>()?;
+                Some(Arc::clone(arc_ref))
             }
             _ => None,
         }
@@ -256,7 +303,7 @@ impl Container {
 
         // Clone the Arc so we can call the factory without holding a borrow.
         let f: FactoryFn = {
-            let entries = self.entries.borrow();
+            let entries = self.entries.read();
             match entries.get(&key)? {
                 Entry::Factory(f) => Arc::clone(f),
                 _ => return None,
@@ -271,27 +318,35 @@ impl Container {
 
     /// Check whether any binding exists for `T`.
     pub fn has<T: 'static>(&self) -> bool {
-        self.entries.borrow().contains_key(&TypeId::of::<T>())
+        self.entries.read().contains_key(&TypeId::of::<T>())
     }
 
     /// Remove the binding for `T`.
+    ///
+    /// # Panics
+    /// Panics if the container is frozen.
     pub fn forget<T: 'static>(&self) {
-        self.entries.borrow_mut().remove(&TypeId::of::<T>());
+        self.assert_not_frozen();
+        self.entries.write().remove(&TypeId::of::<T>());
     }
 
     /// Remove every binding.
+    ///
+    /// # Panics
+    /// Panics if the container is frozen.
     pub fn flush(&self) {
-        self.entries.borrow_mut().clear();
+        self.assert_not_frozen();
+        self.entries.write().clear();
     }
 
     /// Number of registered bindings.
     pub fn len(&self) -> usize {
-        self.entries.borrow().len()
+        self.entries.read().len()
     }
 
     /// `true` when no bindings are registered.
     pub fn is_empty(&self) -> bool {
-        self.entries.borrow().is_empty()
+        self.entries.read().is_empty()
     }
 
     // ── Trait-object API (key-type idiom) ───────────────────────────
@@ -300,12 +355,16 @@ impl Container {
     ///
     /// `Key` is typically an empty unit struct. `Trait` is the object-safe
     /// trait (e.g. `dyn Logger`).  The value is stored as `Arc<Trait>`.
+    ///
+    /// # Panics
+    /// Panics if the container is frozen.
     pub fn bind_trait<Key: 'static, Trait: ?Sized + Send + Sync + 'static>(
         &self,
         value: Arc<Trait>,
     ) {
+        self.assert_not_frozen();
         self.entries
-            .borrow_mut()
+            .write()
             .insert(TypeId::of::<Key>(), Entry::Instance(Box::new(value)));
     }
 
@@ -314,7 +373,7 @@ impl Container {
         &self,
     ) -> Option<Arc<Trait>> {
         self.entries
-            .borrow()
+            .read()
             .get(&TypeId::of::<Key>())
             .and_then(|entry| match entry {
                 Entry::Instance(boxed) => boxed.downcast_ref::<Arc<Trait>>().cloned(),
@@ -352,9 +411,10 @@ mod tests {
             prefix: "Hi".into(),
         });
 
-        let a = c.resolve::<Greeter>().unwrap() as *const Greeter;
-        let b = c.resolve::<Greeter>().unwrap() as *const Greeter;
-        assert_eq!(a, b);
+        let a = c.resolve::<Greeter>().unwrap();
+        let b = c.resolve::<Greeter>().unwrap();
+        // Same Arc → same pointer
+        assert_eq!(Arc::as_ptr(&a), Arc::as_ptr(&b));
     }
 
     #[test]
@@ -362,13 +422,13 @@ mod tests {
         let c = Container::new();
         c.instance("base:".to_string());
         c.singleton(|cx: &Container| {
-            let base: &String = cx.resolve().unwrap();
+            let base: Arc<String> = cx.resolve().unwrap();
             Greeter {
                 prefix: format!("{base}hello"),
             }
         });
 
-        let g: &Greeter = c.resolve().unwrap();
+        let g = c.resolve::<Greeter>().unwrap();
         assert_eq!(g.prefix, "base:hello");
     }
 
@@ -410,7 +470,7 @@ mod tests {
         c.instance(100u32);
 
         c.bind(move |cx: &Container| {
-            let base: &u32 = cx.resolve().unwrap();
+            let base: Arc<u32> = cx.resolve().unwrap();
             format!("value={base}")
         });
 
@@ -468,5 +528,54 @@ mod tests {
 
         c.flush();
         assert!(c.is_empty());
+    }
+
+    // ── Freeze ────────────────────────────────────────────────────
+
+    #[test]
+    fn freeze_prevents_writes() {
+        let c = Container::new();
+        c.instance(42u32);
+        c.freeze();
+
+        assert!(c.is_frozen());
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            c.instance(99u32);
+        }));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_works_after_freeze() {
+        let c = Container::new();
+        c.singleton(|_| Greeter { prefix: "Hi".into() });
+        c.freeze();
+
+        // Should still be able to resolve after freeze
+        let g = c.resolve::<Greeter>().unwrap();
+        assert_eq!(g.prefix, "Hi");
+    }
+
+    #[test]
+    fn concurrent_resolve_after_freeze() {
+        use std::thread;
+
+        let c = Arc::new(Container::new());
+        c.singleton(|_| Greeter { prefix: "Threaded".into() });
+        c.freeze();
+
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let c = Arc::clone(&c);
+                thread::spawn(move || {
+                    let g = c.resolve::<Greeter>().unwrap();
+                    assert_eq!(g.prefix, "Threaded");
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
     }
 }

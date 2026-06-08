@@ -147,6 +147,51 @@ impl Route {
         self
     }
 
+    /// Apply an Axum middleware function to all routes.
+    ///
+    /// Accepts an async function `(Request, Next) -> Response`.
+    /// This is a convenience wrapper around [`axum::middleware::from_fn`].
+    ///
+    /// ```rust,ignore
+    /// use ravel_http::middleware::Next;
+    /// use axum::extract::Request;
+    /// use axum::response::Response;
+    ///
+    /// async fn auth(req: Request, next: Next) -> Response {
+    ///     // check auth...
+    ///     next.run(req).await
+    /// }
+    ///
+    /// Route::new()
+    ///     .get("/", handler)
+    ///     .middleware(auth)
+    ///     .build();
+    /// ```
+    pub fn middleware<F, M>(self, f: F) -> Self
+    where
+        F: Fn(axum::extract::Request, axum::middleware::Next) -> M + Clone + Send + Sync + 'static,
+        M: std::future::Future<Output = axum::response::Response> + Send + 'static,
+    {
+        self.with(|r| r.layer(axum::middleware::from_fn(f)))
+    }
+
+    /// Apply a Tower layer to all routes.
+    ///
+    /// Use this for more advanced middleware that requires state or
+    /// configuration (e.g. CORS, rate limiting, compression).
+    pub fn layer<L>(self, layer: L) -> Self
+    where
+        L: tower::Layer<axum::routing::Route> + Clone + Send + Sync + 'static,
+        L::Service: tower::Service<axum::extract::Request> + Clone + Send + Sync + 'static,
+        <L::Service as tower::Service<axum::extract::Request>>::Response:
+            axum::response::IntoResponse + Send,
+        <L::Service as tower::Service<axum::extract::Request>>::Error:
+            Into<std::convert::Infallible> + 'static,
+        <L::Service as tower::Service<axum::extract::Request>>::Future: Send,
+    {
+        self.with(|r| r.layer(layer))
+    }
+
     /// Materialise the route definitions into an [`axum::Router`].
     pub fn build(self) -> Router {
         self.router
@@ -234,5 +279,20 @@ mod tests {
     fn test_default_creates_empty_router() {
         let route = Route::default();
         let _router = route.build();
+    }
+
+    #[test]
+    fn test_middleware_compiles() {
+        async fn my_middleware(
+            req: axum::extract::Request,
+            next: axum::middleware::Next,
+        ) -> axum::response::Response {
+            next.run(req).await
+        }
+
+        let _router = Route::new()
+            .get("/", index)
+            .middleware(my_middleware)
+            .build();
     }
 }

@@ -147,6 +147,7 @@ impl Generator {
             "storage",
             "tests",
             "src",
+            "src/bin",
         ];
 
         for dir in dirs {
@@ -168,6 +169,16 @@ impl Generator {
         // Default .env
         if !self.exists(".env") {
             self.overwrite_file(".env", ENV_TEMPLATE)?;
+        }
+
+        // Database migrator (database/migrations/mod.rs)
+        if !self.exists("database/migrations/mod.rs") {
+            self.overwrite_file("database/migrations/mod.rs", MIGRATOR_TEMPLATE)?;
+        }
+
+        // Migrate binary (src/bin/migrate.rs)
+        if !self.exists("src/bin/migrate.rs") {
+            self.overwrite_file("src/bin/migrate.rs", MIGRATE_BIN_TEMPLATE)?;
         }
 
         Ok(())
@@ -244,20 +255,32 @@ pub async fn handle(req: Request, next: Next) -> Response {
 }
 "#;
 
-const MIGRATION_TEMPLATE: &str = r#"use anyhow::Result;
+const MIGRATION_TEMPLATE: &str = r#"use sea_orm_migration::prelude::*;
 
-/// Migration: {{name}}
-///
-/// Timestamp: {{timestamp}}
+#[derive(DeriveMigrationName)]
+pub struct Migration;
 
-pub fn up() -> Result<()> {
-    // TODO: apply the migration
-    Ok(())
-}
+#[async_trait::async_trait]
+impl MigrationTrait for Migration {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        // TODO: apply the migration
+        // Example:
+        // manager.create_table(
+        //     Table::create()
+        //         .table(Users::Table)
+        //         .col(ColumnDef::new(Users::Id).integer().not_null().auto_increment().primary_key())
+        //         .col(ColumnDef::new(Users::Name).string().not_null())
+        //         .to_owned()
+        // ).await
+        Ok(())
+    }
 
-pub fn down() -> Result<()> {
-    // TODO: rollback the migration
-    Ok(())
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        // TODO: rollback the migration
+        // Example:
+        // manager.drop_table(Table::drop().table(Users::Table).to_owned()).await
+        Ok(())
+    }
 }
 "#;
 
@@ -296,27 +319,36 @@ impl ServiceProvider for {{name}} {
 }
 "#;
 
-const REQUEST_TEMPLATE: &str = r#"use serde::Deserialize;
+const REQUEST_TEMPLATE: &str = r#"use ravel_http::form_request::FormRequest;
+use ravel_http::validation::{FieldRule, Rule};
+use serde::Deserialize;
 
 /// Form request: {{name}}
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct {{name}} {
-    // TODO: define validation fields
+    // TODO: define fields
+    // pub name: String,
+    // pub email: String,
 }
 
-impl {{name}} {
-    /// Validate the request data.
-    pub fn validate(&self) -> Result<(), Vec<String>> {
-        let mut errors = Vec::new();
-
-        // TODO: add validation rules
-
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
+impl FormRequest for {{name}} {
+    fn rules() -> Vec<FieldRule> {
+        vec![
+            // FieldRule::new("name", vec![Rule::Required, Rule::Min(3)]),
+            // FieldRule::new("email", vec![Rule::Required, Rule::Email]),
+        ]
     }
+
+    // fn authorize(&self) -> bool {
+    //     true
+    // }
+
+    // fn messages() -> std::collections::HashMap<String, String> {
+    //     let mut m = std::collections::HashMap::new();
+    //     m.insert("name.required".into(), "Name is required".into());
+    //     m
+    // }
 }
 "#;
 
@@ -371,6 +403,73 @@ const ENV_TEMPLATE: &str = r#"APP_NAME={{name}}
 APP_ENV=local
 APP_DEBUG=true
 APP_URL=http://localhost:3000
+"#;
+
+const MIGRATOR_TEMPLATE: &str = r#"use sea_orm_migration::prelude::*;
+
+pub struct Migrator;
+
+#[async_trait::async_trait]
+impl MigratorTrait for Migrator {
+    fn migrations() -> Vec<Box<dyn MigrationTrait>> {
+        vec![
+            // Register new migrations here:
+            // Box::new(m20240101_000001_create_users::Migration),
+        ]
+    }
+}
+"#;
+
+const MIGRATE_BIN_TEMPLATE: &str = r#"use std::env;
+use sea_orm::Database;
+use sea_orm_migration::MigratorTrait;
+use ravel_db::connection::ConnectionManager;
+
+#[path = "../../database/migrations/mod.rs"]
+mod migrations;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let mut manager = ConnectionManager::from_config("config")?;
+    let db = manager.connect("default").await?;
+
+    let args: Vec<String> = env::args().collect();
+    let cmd = args.get(1).map(|s| s.as_str()).unwrap_or("up");
+    let steps: Option<u32> = args.get(2).and_then(|s| s.parse().ok());
+
+    match cmd {
+        "up" | "migrate" => {
+            println!("Running migrations...");
+            migrations::Migrator::up(db, steps).await?;
+            println!("Migrations complete.");
+        }
+        "down" | "rollback" => {
+            println!("Rolling back...");
+            migrations::Migrator::down(db, steps.or(Some(1))).await?;
+            println!("Rollback complete.");
+        }
+        "fresh" => {
+            println!("Dropping all tables and re-applying...");
+            migrations::Migrator::fresh(db).await?;
+            println!("Fresh complete.");
+        }
+        "refresh" => {
+            println!("Refreshing (rollback all + re-apply)...");
+            migrations::Migrator::refresh(db).await?;
+            println!("Refresh complete.");
+        }
+        "status" => {
+            migrations::Migrator::status(db).await?;
+        }
+        other => {
+            eprintln!("Unknown command: {other}");
+            eprintln!("Usage: migrate [up|down|fresh|refresh|status] [steps]");
+            std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
 "#;
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -448,7 +547,8 @@ mod tests {
         assert!(fname.ends_with("_create_users_table.rs"));
 
         let content = std::fs::read_to_string(&path).unwrap();
-        assert!(content.contains("fn up()"));
+        assert!(content.contains("MigrationTrait"));
+        assert!(content.contains("async fn up"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -493,7 +593,8 @@ mod tests {
 
         let content = std::fs::read_to_string(tmp.join("app/Http/Requests/LoginRequest.rs")).unwrap();
         assert!(content.contains("pub struct LoginRequest"));
-        assert!(content.contains("fn validate"));
+        assert!(content.contains("impl FormRequest for LoginRequest"));
+        assert!(content.contains("fn rules"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -512,9 +613,17 @@ mod tests {
         assert!(tmp.join(".env").exists());
         assert!(tmp.join("app/Http/Controllers").is_dir());
         assert!(tmp.join("database/migrations").is_dir());
+        assert!(tmp.join("database/migrations/mod.rs").exists());
+        assert!(tmp.join("src/bin/migrate.rs").exists());
 
         let cargo = std::fs::read_to_string(tmp.join("Cargo.toml")).unwrap();
         assert!(cargo.contains("my_app"));
+
+        let migrator = std::fs::read_to_string(tmp.join("database/migrations/mod.rs")).unwrap();
+        assert!(migrator.contains("MigratorTrait"));
+
+        let migrate_bin = std::fs::read_to_string(tmp.join("src/bin/migrate.rs")).unwrap();
+        assert!(migrate_bin.contains("Migrator::up"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

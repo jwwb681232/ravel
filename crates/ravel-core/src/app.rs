@@ -193,6 +193,11 @@ impl Application {
         }
 
         self.booted = true;
+
+        // Freeze the container so it becomes safe for concurrent reads
+        // in the HTTP runtime.
+        self.container.freeze();
+
         Ok(self)
     }
 
@@ -270,7 +275,7 @@ mod tests {
         fn boot(&self, c: &Container) -> Result<()> {
             self.call_order
                 .fetch_add(1, Ordering::SeqCst);
-            let _val: &String = c.resolve().unwrap();
+            let _val: std::sync::Arc<String> = c.resolve().unwrap();
             Ok(())
         }
     }
@@ -280,7 +285,7 @@ mod tests {
             self.call_order
                 .fetch_add(10, Ordering::SeqCst);
             // Should be able to see what A registered (register runs before boot).
-            let _val: &String = c.resolve().unwrap();
+            let _val: std::sync::Arc<String> = c.resolve().unwrap();
             Ok(())
         }
 
@@ -319,7 +324,7 @@ mod tests {
         // Put it in the container manually (normally done by load_config)
         app.container.instance(app.config.clone());
 
-        let repo: &ConfigRepo = app.container.resolve().unwrap();
+        let repo: std::sync::Arc<ConfigRepo> = app.container.resolve().unwrap();
         assert_eq!(repo.get::<String>("app.name").unwrap(), "RavelTest");
     }
 
@@ -340,7 +345,7 @@ mod tests {
             .boot()
             .unwrap();
 
-        let env: &EnvRepo = app.container().resolve().unwrap();
+        let env: std::sync::Arc<EnvRepo> = app.container().resolve().unwrap();
         assert_eq!(env.get("APP_ENV"), Some("testing"));
 
         let _ = std::fs::remove_dir_all(&dir);

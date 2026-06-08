@@ -8,7 +8,8 @@ members = [
     "crates/ravel-http",
     "crates/ravel-generator",
     "crates/ravel-support",
-    "crates/ravel-test"
+    "crates/ravel-test",
+    "testblog"
 ]
 
 resolver = "2"

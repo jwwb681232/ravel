@@ -3,20 +3,32 @@ mod bootstrap;
 #[path = "../routes/mod.rs"]
 mod routes;
 
-use axum::{routing::get, Router};
+use axum::Router;
+use std::sync::Arc;
 
 #[tokio::main]
-async fn main() {
-    bootstrap::app::create_app();
-    let _ = routes::web::routes();
+async fn main() -> anyhow::Result<()> {
+    // Bootstrap the Ravel application — loads config, env, registers providers,
+    // and freezes the container for thread-safe access.
+    let app = bootstrap::app::create_app();
 
-    let app = Router::new().route("/", get(|| async { "Hello, Ravel!" }));
+    // Resolve the Axum Router that was registered by RouteServiceProvider.
+    let router: Arc<Router> = app
+        .container()
+        .resolve()
+        .expect("Router not found in container");
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
-        .await
-        .unwrap();
+    let addr = app
+        .config()
+        .get::<String>("server.host")
+        .unwrap_or_else(|| "127.0.0.1".into());
+    let port = app.config().get::<u16>("server.port").unwrap_or(3000);
+    let bind_addr = format!("{addr}:{port}");
 
-    println!("🚀 Server running at http://127.0.0.1:3000");
+    println!("Ravel running at http://{bind_addr}");
 
-    axum::serve(listener, app).await.unwrap();
+    // Start the Axum server.
+    ravel_http::server::serve((*router).clone(), &bind_addr).await?;
+
+    Ok(())
 }
