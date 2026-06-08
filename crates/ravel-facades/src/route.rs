@@ -109,7 +109,10 @@ impl Route {
 
     pub fn middleware<F>(f: F)
     where
-        F: Fn(axum::extract::Request, axum::middleware::Next) -> std::pin::Pin<
+        F: Fn(
+                axum::extract::Request,
+                axum::middleware::Next,
+            ) -> std::pin::Pin<
                 Box<dyn std::future::Future<Output = axum::response::Response> + Send>,
             > + Clone
             + Send

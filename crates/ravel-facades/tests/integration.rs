@@ -1,9 +1,9 @@
+use anyhow::Result;
 use ravel_core::app::Application;
 use ravel_core::app::ServiceProvider;
 use ravel_core::container::Container;
-use ravel_facades::{Cache, Config, Hash, Route, env, env_or, now, redirect};
 use ravel_facades::response;
-use anyhow::Result;
+use ravel_facades::{Cache, Config, Hash, Route, env, env_or, now, redirect};
 use std::time::Duration;
 
 // Helper: provider that registers routes via the Route facade
@@ -145,10 +145,7 @@ fn test_env_returns_value_or_none() {
     unsafe { std::env::set_var("RAVEL_FACADE_TEST_VAR", "hello") };
     assert_eq!(env("RAVEL_FACADE_TEST_VAR"), Some("hello".to_string()));
     assert_eq!(env("RAVEL_NONEXISTENT_VAR_XYZ"), None);
-    assert_eq!(
-        env_or("RAVEL_NONEXISTENT_VAR_XYZ", "fallback"),
-        "fallback"
-    );
+    assert_eq!(env_or("RAVEL_NONEXISTENT_VAR_XYZ", "fallback"), "fallback");
     unsafe { std::env::remove_var("RAVEL_FACADE_TEST_VAR") };
 }
 

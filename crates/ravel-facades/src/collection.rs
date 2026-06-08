@@ -1,5 +1,6 @@
 //! Collection pipeline — Laravel-style iterable wrapper.
 //! Usage: collect!(vec![...]).map(...).filter(...).to_vec()
+#![allow(clippy::needless_borrow)]
 
 pub struct Collection<T> {
     items: Vec<T>,
@@ -24,7 +25,7 @@ impl<T> Collection<T> {
 
     pub fn reject(self, mut f: impl FnMut(&T) -> bool) -> Self {
         Self {
-            items: self.items.into_iter().filter(|x| !f(&x)).collect(),
+            items: self.items.into_iter().filter(|x| !f(x)).collect(),
         }
     }
 

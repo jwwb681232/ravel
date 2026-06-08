@@ -1,4 +1,5 @@
 //! Request-level facade support -- task-local context for Auth, Session, request().
+#![allow(clippy::arc_with_non_send_sync)]
 
 use crate::request::RavelRequest;
 use crate::session::SessionData;

@@ -56,6 +56,7 @@ impl AppGlobal {
     /// Store the application as the global singleton.
     ///
     /// Returns `Err(app)` if the global has already been set.
+    #[allow(clippy::result_large_err)]
     pub fn set(&self, app: Application) -> Result<(), Application> {
         let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_some() {
@@ -75,6 +76,12 @@ impl AppGlobal {
         } else {
             None
         }
+    }
+}
+
+impl Default for AppGlobal {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

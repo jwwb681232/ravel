@@ -19,7 +19,10 @@ impl Queue {
         tokio::runtime::Handle::current().block_on(engine.dispatch(job))
     }
 
-    pub fn dispatch_later<J: Job + serde::Serialize>(job: J, delay: chrono::Duration) -> Result<()> {
+    pub fn dispatch_later<J: Job + serde::Serialize>(
+        job: J,
+        delay: chrono::Duration,
+    ) -> Result<()> {
         let engine = Self::engine();
         tokio::runtime::Handle::current().block_on(engine.dispatch_later(job, delay))
     }

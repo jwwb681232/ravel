@@ -28,9 +28,10 @@ pub fn abort(status: u16, message: impl Into<String>) -> RavelError {
         401 => RavelError::unauthorized(msg),
         403 => RavelError::forbidden(msg),
         404 => RavelError::not_found(msg),
-        422 => RavelError::validation_error(
-            std::collections::HashMap::from([("message".to_string(), vec![msg])])
-        ),
+        422 => RavelError::validation_error(std::collections::HashMap::from([(
+            "message".to_string(),
+            vec![msg],
+        )])),
         _ => RavelError::Internal(anyhow::anyhow!("{}", msg)),
     }
 }

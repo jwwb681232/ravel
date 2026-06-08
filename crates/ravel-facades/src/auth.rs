@@ -20,7 +20,9 @@ impl Auth {
         REQUEST
             .try_with(|ctx| {
                 let auth_id = ctx.auth_id.lock();
-                auth_id.as_ref().and_then(|id| serde_json::from_str(id).ok())
+                auth_id
+                    .as_ref()
+                    .and_then(|id| serde_json::from_str(id).ok())
             })
             .unwrap_or(None)
     }

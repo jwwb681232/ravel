@@ -1,9 +1,9 @@
 //! Integration tests using ravel-facades.
+use anyhow::Result;
 use axum::http::StatusCode;
 use ravel_core::app::{Application, ServiceProvider};
 use ravel_core::container::Container;
 use ravel_facades::Route;
-use anyhow::Result;
 
 // ── ServiceProvider ──────────────────────────────────────────────────
 
