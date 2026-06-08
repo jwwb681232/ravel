@@ -1,0 +1,28 @@
+# Ravel configuration — config/app.toml
+
+[app]
+name = "testblog"
+env = "local"
+debug = true
+url = "http://localhost:3000"
+timezone = "UTC"
+locale = "en"
+
+[server]
+host = "127.0.0.1"
+port = 3000
+
+[database]
+default = "sqlite"
+
+[database.connections.sqlite]
+driver = "sqlite"
+database = "database/ravel.sqlite"
+
+[database.connections.pgsql]
+driver = "postgres"
+host = "127.0.0.1"
+port = 5432
+database = "testblog"
+username = "postgres"
+password = ""
