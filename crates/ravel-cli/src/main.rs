@@ -63,6 +63,10 @@ enum Commands {
     /// Show migration status
     #[command(name = "migrate:status")]
     MigrateStatus,
+
+    /// Generate an application key
+    #[command(name = "key:generate")]
+    KeyGenerate,
 }
 
 #[derive(Subcommand)]
@@ -71,8 +75,13 @@ enum MakeCommands {
     Controller { name: String },
     /// Create a new Middleware
     Middleware { name: String },
-    /// Create a new Model
-    Model { name: String },
+    /// Create a new Model (SeaORM entity)
+    Model {
+        name: String,
+        /// Also generate a migration for this model
+        #[arg(short = 'm', long)]
+        migration: bool,
+    },
     /// Create a new Migration (auto-timestamped)
     Migration { name: String },
     /// Create a new Seeder
@@ -110,9 +119,13 @@ async fn main() -> Result<()> {
                     g.scaffold_middleware(&name)?;
                     println!("✅ Middleware created: {}", name);
                 }
-                MakeCommands::Model { name } => {
-                    commands::model::handle(&g, &name)?;
+                MakeCommands::Model { name, migration } => {
+                    g.scaffold_model(&name)?;
                     println!("✅ Model created: {}", name);
+                    if migration {
+                        g.scaffold_migration(&format!("Create{name}"))?;
+                        println!("✅ Migration created for: Create{}", name);
+                    }
                 }
                 MakeCommands::Migration { name } => {
                     g.scaffold_migration(&name)?;
@@ -165,6 +178,10 @@ async fn main() -> Result<()> {
 
         Commands::MigrateStatus => {
             commands::migrate::handle_status().await?;
+        }
+
+        Commands::KeyGenerate => {
+            commands::key_generate::handle()?;
         }
     }
 

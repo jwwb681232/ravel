@@ -1,6 +1,6 @@
 pub mod db_seed;
+pub mod key_generate;
 pub mod migrate;
-pub mod model;
 pub mod new;
 pub mod route_list;
 pub mod serve;

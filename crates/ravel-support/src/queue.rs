@@ -9,6 +9,8 @@
 //! ```rust,ignore
 //! use ravel_support::queue::{Job, Queue};
 //! use serde::{Serialize, Deserialize};
+//! use std::sync::Arc;
+//! use std::sync::atomic::{AtomicUsize, Ordering};
 //!
 //! #[derive(Serialize, Deserialize)]
 //! struct SendEmail { to: String, body: String }
@@ -21,13 +23,14 @@
 //! }
 //!
 //! let queue = Queue::memory();
+//! queue.register::<SendEmail>();
 //! queue.dispatch(SendEmail { to: "alice@x.com".into(), body: "Hi!".into() }).unwrap();
 //! queue.run();
 //! ```
 
 use anyhow::Result;
 use serde::{de::DeserializeOwned, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 /// A unit of work that can be dispatched to a queue.
@@ -78,11 +81,65 @@ impl QueueDriver for MemoryDriver {
     }
 }
 
+// ── Job Registry ───────────────────────────────────────────────────
+
+/// A handler function that deserializes a job payload and executes it.
+pub type JobHandler = Arc<dyn Fn(&str) -> Result<()> + Send + Sync>;
+
+/// Registry that maps job names to their handler functions.
+///
+/// When a job is popped from the queue, the registry looks up the
+/// handler by name, deserializes the payload, and calls `handle()`.
+pub struct JobRegistry {
+    handlers: HashMap<String, JobHandler>,
+}
+
+impl JobRegistry {
+    /// Create an empty registry.
+    pub fn new() -> Self {
+        Self {
+            handlers: HashMap::new(),
+        }
+    }
+
+    /// Register a job type. This allows the queue to deserialize
+    /// and execute jobs of this type when they are popped.
+    pub fn register<J: Job>(&mut self) {
+        let handler: JobHandler = Arc::new(|payload: &str| {
+            let job: J = serde_json::from_str(payload)?;
+            job.handle();
+            Ok(())
+        });
+        self.handlers.insert(J::name().to_string(), handler);
+    }
+
+    /// Check if a job type is registered.
+    pub fn has(&self, name: &str) -> bool {
+        self.handlers.contains_key(name)
+    }
+
+    /// Get the handler for a job name.
+    fn get(&self, name: &str) -> Option<&JobHandler> {
+        self.handlers.get(name)
+    }
+}
+
+impl Default for JobRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ── Queue ──────────────────────────────────────────────────────────
 
 /// The job queue.
+///
+/// Holds a driver (memory, Redis, etc.) and a registry of job handlers.
+/// Jobs must be registered with [`register`](Self::register) before they
+/// can be executed by [`work`](Self::work).
 pub struct Queue {
     driver: Arc<dyn QueueDriver>,
+    registry: Arc<Mutex<JobRegistry>>,
 }
 
 impl Queue {
@@ -92,6 +149,7 @@ impl Queue {
             driver: Arc::new(MemoryDriver {
                 jobs: Mutex::new(VecDeque::new()),
             }),
+            registry: Arc::new(Mutex::new(JobRegistry::new())),
         }
     }
 
@@ -99,7 +157,15 @@ impl Queue {
     pub fn with_driver(driver: impl QueueDriver + 'static) -> Self {
         Self {
             driver: Arc::new(driver),
+            registry: Arc::new(Mutex::new(JobRegistry::new())),
         }
+    }
+
+    /// Register a job type so it can be executed when popped from the queue.
+    ///
+    /// You must call this for each job type before calling `work()` or `run()`.
+    pub fn register<J: Job>(&self) {
+        self.registry.lock().unwrap().register::<J>();
     }
 
     /// Dispatch a job by serialising it and pushing it onto the queue.
@@ -109,13 +175,21 @@ impl Queue {
     }
 
     /// Process the next job in the queue, returning true if a job was run.
+    ///
+    /// Panics if the job type is not registered.
     pub fn work(&self) -> bool {
-        if let Ok(Some((_name, payload))) = self.driver.pop() {
-            // In-memory mode: we don't deserialise by job type here since
-            // we don't have a type registry.  The real implementation
-            // dispatches to registered handlers.
-            println!("[queue] processing job: {}", _name);
-            let _ = payload;
+        if let Ok(Some((name, payload))) = self.driver.pop() {
+            let registry = self.registry.lock().unwrap();
+            if let Some(handler) = registry.get(&name) {
+                handler(&payload).unwrap_or_else(|e| {
+                    eprintln!("[queue] error executing job '{}': {}", name, e);
+                });
+            } else {
+                eprintln!(
+                    "[queue] warning: job type '{}' not registered, skipping",
+                    name
+                );
+            }
             return true;
         }
         false
@@ -134,6 +208,11 @@ impl Queue {
     pub fn pending(&self) -> usize {
         self.driver.size()
     }
+
+    /// Check if a job type is registered.
+    pub fn is_registered<J: Job>(&self) -> bool {
+        self.registry.lock().unwrap().has(J::name())
+    }
 }
 
 impl Default for Queue {
@@ -148,50 +227,112 @@ impl Default for Queue {
 mod tests {
     use super::*;
     use serde::Deserialize;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // Each test gets its own job type + counter to avoid parallel test interference
+    static COUNTER_SINGLE: AtomicUsize = AtomicUsize::new(0);
+    static COUNTER_BATCH: AtomicUsize = AtomicUsize::new(0);
+    static COUNTER_MULTI_A: AtomicUsize = AtomicUsize::new(0);
+    static COUNTER_MULTI_B: AtomicUsize = AtomicUsize::new(0);
 
     #[derive(Serialize, Deserialize)]
-    struct TestJob {
-        msg: String,
+    struct SingleJob { msg: String }
+    impl Job for SingleJob {
+        fn handle(&self) { COUNTER_SINGLE.fetch_add(1, Ordering::SeqCst); }
+        fn name() -> &'static str { "single_job" }
     }
 
-    impl Job for TestJob {
-        fn handle(&self) {
-            let _ = &self.msg;
-        }
-        fn name() -> &'static str {
-            "test_job"
-        }
+    #[derive(Serialize, Deserialize)]
+    struct BatchJob { msg: String }
+    impl Job for BatchJob {
+        fn handle(&self) { COUNTER_BATCH.fetch_add(1, Ordering::SeqCst); }
+        fn name() -> &'static str { "batch_job" }
+    }
+
+    #[derive(Serialize, Deserialize)]
+    struct MultiJobA { msg: String }
+    impl Job for MultiJobA {
+        fn handle(&self) { COUNTER_MULTI_A.fetch_add(1, Ordering::SeqCst); }
+        fn name() -> &'static str { "multi_job_a" }
+    }
+
+    #[derive(Serialize, Deserialize)]
+    struct MultiJobB { value: usize }
+    impl Job for MultiJobB {
+        fn handle(&self) { COUNTER_MULTI_B.fetch_add(self.value, Ordering::SeqCst); }
+        fn name() -> &'static str { "multi_job_b" }
+    }
+
+    #[derive(Serialize, Deserialize)]
+    struct UnregJob { msg: String }
+    impl Job for UnregJob {
+        fn handle(&self) { panic!("should not be called"); }
+        fn name() -> &'static str { "unreg_job" }
     }
 
     #[test]
     fn test_dispatch_and_work() {
+        COUNTER_SINGLE.store(0, Ordering::SeqCst);
         let queue = Queue::memory();
+        queue.register::<SingleJob>();
         assert_eq!(queue.pending(), 0);
 
-        queue
-            .dispatch(TestJob {
-                msg: "hello".into(),
-            })
-            .unwrap();
+        queue.dispatch(SingleJob { msg: "hello".into() }).unwrap();
         assert_eq!(queue.pending(), 1);
 
         assert!(queue.work());
         assert_eq!(queue.pending(), 0);
+        assert_eq!(COUNTER_SINGLE.load(Ordering::SeqCst), 1);
     }
 
     #[test]
     fn test_run_processes_all() {
+        COUNTER_BATCH.store(0, Ordering::SeqCst);
         let queue = Queue::memory();
+        queue.register::<BatchJob>();
+
         for _ in 0..5 {
-            queue
-                .dispatch(TestJob {
-                    msg: "x".into(),
-                })
-                .unwrap();
+            queue.dispatch(BatchJob { msg: "x".into() }).unwrap();
         }
 
         let count = queue.run();
         assert_eq!(count, 5);
         assert_eq!(queue.pending(), 0);
+        assert_eq!(COUNTER_BATCH.load(Ordering::SeqCst), 5);
+    }
+
+    #[test]
+    fn test_multiple_job_types() {
+        COUNTER_MULTI_A.store(0, Ordering::SeqCst);
+        COUNTER_MULTI_B.store(0, Ordering::SeqCst);
+        let queue = Queue::memory();
+        queue.register::<MultiJobA>();
+        queue.register::<MultiJobB>();
+
+        queue.dispatch(MultiJobA { msg: "a".into() }).unwrap();
+        queue.dispatch(MultiJobB { value: 10 }).unwrap();
+        queue.dispatch(MultiJobA { msg: "b".into() }).unwrap();
+
+        let count = queue.run();
+        assert_eq!(count, 3);
+        assert_eq!(COUNTER_MULTI_A.load(Ordering::SeqCst), 2);
+        assert_eq!(COUNTER_MULTI_B.load(Ordering::SeqCst), 10);
+    }
+
+    #[test]
+    fn test_unregistered_job_skipped() {
+        let queue = Queue::memory();
+        queue.dispatch(UnregJob { msg: "x".into() }).unwrap();
+        // work() returns true (a job was popped) but handler is not found
+        assert!(queue.work());
+    }
+
+    #[test]
+    fn test_is_registered() {
+        let queue = Queue::memory();
+        assert!(!queue.is_registered::<SingleJob>());
+        queue.register::<SingleJob>();
+        assert!(queue.is_registered::<SingleJob>());
+        assert!(!queue.is_registered::<BatchJob>());
     }
 }

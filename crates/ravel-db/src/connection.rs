@@ -22,7 +22,9 @@
 //! ```
 
 use anyhow::{Context, Result};
+use parking_lot::RwLock;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
@@ -92,18 +94,19 @@ impl DatabaseConfig {
 
 /// Manages named database connections.
 ///
+/// Thread-safe: can be shared across threads via `Arc<ConnectionManager>`.
 /// Loads configuration from `config/database.toml` and lazily connects.
 pub struct ConnectionManager {
-    configs: std::collections::HashMap<String, DatabaseConfig>,
-    connections: std::collections::HashMap<String, DatabaseConnection>,
+    configs: HashMap<String, DatabaseConfig>,
+    connections: RwLock<HashMap<String, DatabaseConnection>>,
 }
 
 impl ConnectionManager {
     /// Create an empty manager.
     pub fn new() -> Self {
         Self {
-            configs: std::collections::HashMap::new(),
-            connections: std::collections::HashMap::new(),
+            configs: HashMap::new(),
+            connections: RwLock::new(HashMap::new()),
         }
     }
 
@@ -126,13 +129,13 @@ impl ConnectionManager {
         let content = std::fs::read_to_string(&file)
             .with_context(|| format!("Reading {}", file.display()))?;
 
-        let map: std::collections::HashMap<String, DatabaseConfig> =
+        let map: HashMap<String, DatabaseConfig> =
             toml::from_str(&content)
                 .with_context(|| format!("Parsing {}", file.display()))?;
 
         Ok(Self {
             configs: map,
-            connections: std::collections::HashMap::new(),
+            connections: RwLock::new(HashMap::new()),
         })
     }
 
@@ -143,28 +146,32 @@ impl ConnectionManager {
 
     /// Connect to a named database (or return a cached connection).
     ///
-    /// The name must match a key in `config/database.toml` or previously
-    /// registered via [`register`](Self::register).
-    pub async fn connect(&mut self, name: &str) -> Result<&DatabaseConnection> {
-        if !self.connections.contains_key(name) {
-            let config = self
-                .configs
-                .get(name)
-                .ok_or_else(|| anyhow::anyhow!("No database config for '{name}'"))?;
-
-            let db = Database::connect(config.to_connect_options())
-                .await
-                .with_context(|| format!("Connecting to database '{name}'"))?;
-
-            self.connections.insert(name.to_string(), db);
+    /// Thread-safe: takes `&self` and lazily connects on first call.
+    /// Returns a clone of the `DatabaseConnection` (cheap — it's Arc-based).
+    pub async fn connect(&self, name: &str) -> Result<DatabaseConnection> {
+        // Fast path: check if already connected
+        {
+            let conns = self.connections.read();
+            if let Some(db) = conns.get(name) {
+                return Ok(db.clone());
+            }
         }
 
-        Ok(self.connections.get(name).unwrap())
-    }
+        // Slow path: connect and cache
+        let config = self
+            .configs
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("No database config for '{name}'"))?;
 
-    /// Take ownership of the connection (removes it from the pool).
-    pub fn take_connection(&mut self, name: &str) -> Option<DatabaseConnection> {
-        self.connections.remove(name)
+        let db = Database::connect(config.to_connect_options())
+            .await
+            .with_context(|| format!("Connecting to database '{name}'"))?;
+
+        self.connections
+            .write()
+            .insert(name.to_string(), db.clone());
+
+        Ok(db)
     }
 
     /// Return all config names.
@@ -175,6 +182,11 @@ impl ConnectionManager {
     /// Check whether a config exists.
     pub fn has_config(&self, name: &str) -> bool {
         self.configs.contains_key(name)
+    }
+
+    /// Check whether a connection is established.
+    pub fn is_connected(&self, name: &str) -> bool {
+        self.connections.read().contains_key(name)
     }
 }
 

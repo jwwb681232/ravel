@@ -6,8 +6,8 @@
 //! use ravel_http::request::RavelRequest;
 //!
 //! async fn handler(req: RavelRequest) -> impl IntoResponse {
-//!     let name: Option<String> = req.input("name");
 //!     let page: u32 = req.query("page").unwrap_or(1);
+//!     let name: Option<String> = req.query("name");
 //!     // ...
 //! }
 //! ```
@@ -21,25 +21,32 @@ use std::collections::HashMap;
 /// A Ravel-flavoured request wrapper.
 ///
 /// Wraps an [`axum::extract::Request`] and provides Laravel-style helpers:
-/// - `input(key)` — get a POST/PUT body field (JSON or form)
 /// - `query(key)` — get a query-string parameter
 /// - `header(key)` — get a request header
 /// - `method()` — HTTP method as &str
 /// - `path()` — URI path
 ///
+/// Query parameters are parsed eagerly on construction (cheap — each request
+/// gets a fresh `RavelRequest`), so all accessors use `&self`.
+///
 /// You can inject it as an Axum extractor thanks to [`FromRequest`].
 pub struct RavelRequest {
     inner: Request<Body>,
-    /// Cached parsed query string.
-    query_params: Option<HashMap<String, String>>,
+    query_params: HashMap<String, String>,
 }
 
 impl RavelRequest {
     /// Create from the raw Axum request.
     pub fn new(req: Request<Body>) -> Self {
+        let query_params = req
+            .uri()
+            .query()
+            .map(|qs| url::form_urlencoded::parse(qs.as_bytes()).into_owned().collect())
+            .unwrap_or_default();
+
         Self {
             inner: req,
-            query_params: None,
+            query_params,
         }
     }
 
@@ -62,42 +69,25 @@ impl RavelRequest {
     ///
     /// ```rust,ignore
     /// let page: u32 = req.query("page").unwrap_or(1);
+    /// let name: String = req.query("name").unwrap_or_default();
     /// ```
-    pub fn query<T: DeserializeOwned>(&mut self, key: &str) -> Option<T> {
-        if self.query_params.is_none() {
-            self.query_params = self
-                .inner
-                .uri()
-                .query()
-                .map(|qs| {
-                    url::form_urlencoded::parse(qs.as_bytes())
-                        .into_owned()
-                        .collect()
-                });
-        }
-
-        self.query_params
-            .as_ref()
-            .and_then(|m| m.get(key))
-            .and_then(|v| serde_json::from_str(v).ok())
+    pub fn query<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
+        let raw = self.query_params.get(key)?;
+        // Try direct JSON parse (works for numbers, booleans, etc.)
+        // Fall back to string-wrapped parse (works for raw string values)
+        serde_json::from_str(raw)
+            .or_else(|_| serde_json::from_str(&format!("\"{}\"", raw)))
+            .ok()
     }
 
     /// Check whether a query parameter exists.
-    pub fn has_query(&mut self, key: &str) -> bool {
-        if self.query_params.is_none() {
-            self.query_params = self
-                .inner
-                .uri()
-                .query()
-                .map(|qs| {
-                    url::form_urlencoded::parse(qs.as_bytes())
-                        .into_owned()
-                        .collect()
-                });
-        }
-        self.query_params
-            .as_ref()
-            .map_or(false, |m| m.contains_key(key))
+    pub fn has_query(&self, key: &str) -> bool {
+        self.query_params.contains_key(key)
+    }
+
+    /// Get all query parameters as a map.
+    pub fn queries(&self) -> &HashMap<String, String> {
+        &self.query_params
     }
 
     /// Get a specific header value.
@@ -139,5 +129,40 @@ impl<S: Send + Sync + 'static> FromRequest<S> for RavelRequest {
 
     async fn from_request(req: Request<Body>, _state: &S) -> Result<Self, Self::Rejection> {
         Ok(Self::new(req))
+    }
+}
+
+// ── Tests ──────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_query_self() {
+        let req = Request::builder()
+            .uri("/test?name=alice&age=30")
+            .body(Body::empty())
+            .unwrap();
+
+        let r: &RavelRequest = &RavelRequest::new(req);
+        // Both query() and has_query() should work with &self
+        assert_eq!(r.query::<String>("name").unwrap(), "alice");
+        assert_eq!(r.query::<i32>("age").unwrap(), 30);
+        assert!(r.has_query("name"));
+        assert!(!r.has_query("missing"));
+        assert!(r.query::<String>("missing").is_none());
+    }
+
+    #[test]
+    fn test_empty_query() {
+        let req = Request::builder()
+            .uri("/test")
+            .body(Body::empty())
+            .unwrap();
+
+        let r = RavelRequest::new(req);
+        assert!(r.queries().is_empty());
+        assert!(!r.has_query("anything"));
     }
 }

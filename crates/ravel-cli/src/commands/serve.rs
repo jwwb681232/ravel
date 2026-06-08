@@ -1,27 +1,15 @@
 //! ravel serve — start the development server.
 //!
-//! 1. Builds the project via `cargo build`
-//! 2. Spawns the binary
-//! 3. Waits for it to exit (Ctrl+C)
+//! Runs `cargo run` which builds and starts the project binary.
 
 use anyhow::Result;
 use std::process::Command;
 
 pub fn handle() -> Result<()> {
-    println!("🔨 Building...");
-    let build = Command::new("cargo")
-        .args(["build"])
-        .status()?;
-
-    if !build.success() {
-        anyhow::bail!("Build failed — check errors above");
-    }
-
     println!("🚀 Starting server...");
 
-    // Run the built binary
     let status = Command::new("cargo")
-        .args(["run"])
+        .arg("run")
         .status()?;
 
     if !status.success() {

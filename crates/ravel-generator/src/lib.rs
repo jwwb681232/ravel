@@ -130,6 +130,12 @@ impl Generator {
         self.create_file(&format!("app/Http/Requests/{name}.rs"), &content)
     }
 
+    /// Generate a Model file (SeaORM entity).
+    pub fn scaffold_model(&self, name: &str) -> Result<()> {
+        let content = self.render(MODEL_TEMPLATE, name);
+        self.create_file(&format!("app/Models/{name}.rs"), &content)
+    }
+
     /// Scaffold the initial project skeleton (used by `ravel new`).
     pub fn scaffold_project(&self, project_name: &str) -> Result<()> {
         let dirs = [
@@ -171,6 +177,9 @@ impl Generator {
             self.overwrite_file(".env", ENV_TEMPLATE)?;
         }
 
+        // .env.example (always overwrite to keep in sync)
+        self.overwrite_file(".env.example", ENV_TEMPLATE)?;
+
         // Database migrator (database/migrations/mod.rs)
         if !self.exists("database/migrations/mod.rs") {
             self.overwrite_file("database/migrations/mod.rs", MIGRATOR_TEMPLATE)?;
@@ -179,6 +188,11 @@ impl Generator {
         // Migrate binary (src/bin/migrate.rs)
         if !self.exists("src/bin/migrate.rs") {
             self.overwrite_file("src/bin/migrate.rs", MIGRATE_BIN_TEMPLATE)?;
+        }
+
+        // Seed binary (src/bin/seed.rs)
+        if !self.exists("src/bin/seed.rs") {
+            self.overwrite_file("src/bin/seed.rs", SEED_BIN_TEMPLATE)?;
         }
 
         Ok(())
@@ -285,11 +299,17 @@ impl MigrationTrait for Migration {
 "#;
 
 const SEEDER_TEMPLATE: &str = r#"use anyhow::Result;
+use sea_orm::DatabaseConnection;
 
 /// Seeder: {{name}}
 
-pub fn run() -> Result<()> {
+pub async fn run(_db: &DatabaseConnection) -> Result<()> {
     // TODO: insert seed data
+    // Example:
+    // use sea_orm::ActiveModelTrait;
+    // use sea_orm::ActiveValue::Set;
+    // let model = your_model::ActiveModel { name: Set("test".into()), ..Default::default() };
+    // model.insert(_db).await?;
     Ok(())
 }
 "#;
@@ -350,6 +370,27 @@ impl FormRequest for {{name}} {
     //     m
     // }
 }
+"#;
+
+const MODEL_TEMPLATE: &str = r#"use sea_orm::entity::prelude::*;
+
+/// Model: {{name}}
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+#[sea_orm(table_name = "{{snake}}")]
+pub struct Model {
+    #[sea_orm(primary_key)]
+    pub id: i32,
+    // TODO: add columns
+    // pub name: String,
+    // pub email: String,
+    // pub created_at: DateTime,
+    // pub updated_at: DateTime,
+}
+
+#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+pub enum Relation {}
+
+impl ActiveModelBehavior for ActiveModel {}
 "#;
 
 const CARGO_TOML_TEMPLATE: &str = r#"[package]
@@ -472,6 +513,24 @@ async fn main() -> anyhow::Result<()> {
 }
 "#;
 
+const SEED_BIN_TEMPLATE: &str = r#"use sea_orm::Database;
+use ravel_db::connection::ConnectionManager;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let mut manager = ConnectionManager::from_config("config")?;
+    let db = manager.connect("default").await?;
+
+    println!("Seeding database...");
+
+    // Register and run seeders here:
+    // seeders::UserSeeder::run(db).await?;
+
+    println!("Database seeded.");
+    Ok(())
+}
+"#;
+
 // ── Tests ──────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -562,7 +621,7 @@ mod tests {
         g.scaffold_seeder("UserSeeder").unwrap();
 
         let content = std::fs::read_to_string(tmp.join("database/seeders/UserSeeder.rs")).unwrap();
-        assert!(content.contains("pub fn run()"));
+        assert!(content.contains("pub async fn run(_db: &DatabaseConnection)"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -615,6 +674,7 @@ mod tests {
         assert!(tmp.join("database/migrations").is_dir());
         assert!(tmp.join("database/migrations/mod.rs").exists());
         assert!(tmp.join("src/bin/migrate.rs").exists());
+        assert!(tmp.join("src/bin/seed.rs").exists());
 
         let cargo = std::fs::read_to_string(tmp.join("Cargo.toml")).unwrap();
         assert!(cargo.contains("my_app"));

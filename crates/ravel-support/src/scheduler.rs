@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 
 /// A scheduled task.
 pub struct Task {
-    name: String,
+    pub name: String,
     callback: Arc<dyn Fn() + Send + Sync + 'static>,
     interval: Duration,
     next_run: Mutex<DateTime<Utc>>,
@@ -94,36 +94,36 @@ pub struct TaskBuilder<'a> {
 
 impl TaskBuilder<'_> {
     /// Run the task every `minutes` minutes.
-    pub fn every_minutes(self, minutes: i64) -> &'static str {
+    /// Returns the task name.
+    pub fn every_minutes(self, minutes: i64) -> String {
+        let name = self.name.clone();
         let task = Task {
-            name: self.name.clone(),
+            name: self.name,
             callback: self.callback,
             interval: Duration::minutes(minutes),
             next_run: Mutex::new(Utc::now() + Duration::minutes(minutes)),
         };
-        let name = task.name.clone();
-        // Leak the string to get a &'static str — this is a tiny allocation
-        // and the scheduler lives for the process lifetime.
-        let leaked: &'static str = Box::leak(name.into_boxed_str());
         self.scheduler.tasks.push(task);
-        leaked
+        name
     }
 
     /// Run the task every `hours` hours.
-    pub fn every_hours(self, hours: i64) -> &'static str {
+    /// Returns the task name.
+    pub fn every_hours(self, hours: i64) -> String {
+        let name = self.name.clone();
         let task = Task {
-            name: self.name.clone(),
+            name: self.name,
             callback: self.callback,
             interval: Duration::hours(hours),
             next_run: Mutex::new(Utc::now() + Duration::hours(hours)),
         };
-        let leaked: &'static str = Box::leak(self.name.into_boxed_str());
         self.scheduler.tasks.push(task);
-        leaked
+        name
     }
 
     /// Run the task once per day at midnight UTC.
-    pub fn daily(self) -> &'static str {
+    /// Returns the task name.
+    pub fn daily(self) -> String {
         self.every_hours(24)
     }
 }

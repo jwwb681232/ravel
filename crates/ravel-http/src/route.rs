@@ -147,6 +147,38 @@ impl Route {
         self
     }
 
+    /// Wire a controller into the route set.
+    ///
+    /// Creates a controller instance from the IoC container and passes it
+    /// to the closure, which can register routes using the controller's methods.
+    ///
+    /// ```rust,ignore
+    /// use ravel_http::controller::Controller;
+    ///
+    /// struct UserController;
+    /// impl Controller for UserController {
+    ///     fn boot(container: &Container) -> Self { Self }
+    /// }
+    /// impl UserController {
+    ///     async fn index() -> impl IntoResponse { "users" }
+    ///     async fn show(Path(id): Path<i32>) -> impl IntoResponse { format!("user {}", id) }
+    /// }
+    ///
+    /// Route::new()
+    ///     .controller(UserController::boot(&container), |r, _ctrl| {
+    ///         r.get("/users", UserController::index)
+    ///          .get("/users/:id", UserController::show)
+    ///     })
+    ///     .build();
+    /// ```
+    pub fn controller<C: crate::controller::Controller>(
+        self,
+        ctrl: C,
+        f: impl FnOnce(Route, &C) -> Route,
+    ) -> Self {
+        f(self, &ctrl)
+    }
+
     /// Apply an Axum middleware function to all routes.
     ///
     /// Accepts an async function `(Request, Next) -> Response`.
