@@ -16,9 +16,9 @@ pub struct RequestContext {
     /// The raw HTTP request wrapper.
     pub request: RavelRequest,
     /// Mutable session data (read/write during request).
-    pub(crate) session: Mutex<SessionData>,
+    pub session: Mutex<SessionData>,
     /// Current authenticated user ID, if any.
-    pub(crate) auth_id: Mutex<Option<String>>,
+    pub auth_id: Mutex<Option<String>>,
 }
 
 impl RequestContext {

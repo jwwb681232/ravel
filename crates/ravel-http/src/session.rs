@@ -37,9 +37,9 @@ use tower::Layer;
 // ── Session data ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub(crate) struct SessionData {
-    pub(crate) values: HashMap<String, serde_json::Value>,
-    pub(crate) flash: HashMap<String, serde_json::Value>,
+pub struct SessionData {
+    pub values: HashMap<String, serde_json::Value>,
+    pub flash: HashMap<String, serde_json::Value>,
     #[serde(default)]
     pub(crate) flash_consumed: HashMap<String, serde_json::Value>,
 }
