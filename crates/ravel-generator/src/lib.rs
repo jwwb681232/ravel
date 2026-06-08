@@ -40,6 +40,7 @@ impl Generator {
         tera.add_raw_template("provider", PROVIDER_TEMPLATE).unwrap();
         tera.add_raw_template("request", REQUEST_TEMPLATE).unwrap();
         tera.add_raw_template("model", MODEL_TEMPLATE).unwrap();
+        tera.add_raw_template("job", JOB_TEMPLATE).unwrap();
         tera.add_raw_template("cargo_toml", CARGO_TOML_TEMPLATE).unwrap();
         tera.add_raw_template("main_rs", MAIN_RS_TEMPLATE).unwrap();
         tera.add_raw_template("app_toml", APP_TOML_TEMPLATE).unwrap();
@@ -164,6 +165,12 @@ impl Generator {
     pub fn scaffold_model(&self, name: &str) -> Result<()> {
         let content = self.render("model", name)?;
         self.create_file(&format!("app/Models/{name}.rs"), &content)
+    }
+
+    /// Generate a Job file.
+    pub fn scaffold_job(&self, name: &str) -> Result<()> {
+        let content = self.render("job", name)?;
+        self.create_file(&format!("app/Jobs/{name}.rs"), &content)
     }
 
     /// Scaffold the initial project skeleton (used by `ravel new`).
@@ -365,6 +372,27 @@ impl ServiceProvider for {{name}} {
 
     fn name(&self) -> &str {
         "{{name}}"
+    }
+}
+"#;
+
+const JOB_TEMPLATE: &str = r#"use ravel_support::queue::Job;
+use ravel_macros::Job;
+use serde::{Serialize, Deserialize};
+use async_trait::async_trait;
+
+#[derive(Serialize, Deserialize, Job)]
+#[job(name = "{{snake}}")]
+pub struct {{name}} {
+    // TODO: add payload fields
+}
+
+#[async_trait]
+impl Job for {{name}} {
+    async fn handle(&self) -> anyhow::Result<()> {
+        // TODO: implement job logic
+        tracing::info!("{{name}} job executed");
+        Ok(())
     }
 }
 "#;

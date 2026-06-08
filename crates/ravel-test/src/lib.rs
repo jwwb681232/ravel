@@ -60,6 +60,56 @@ impl TestClient {
         .await
     }
 
+    /// Send a PUT request with a JSON body.
+    pub async fn put_json(&self, uri: &str, body: &str) -> TestResponse {
+        self.send(
+            Request::builder()
+                .uri(uri)
+                .method("PUT")
+                .header("Content-Type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+    }
+
+    /// Send a PATCH request with a JSON body.
+    pub async fn patch_json(&self, uri: &str, body: &str) -> TestResponse {
+        self.send(
+            Request::builder()
+                .uri(uri)
+                .method("PATCH")
+                .header("Content-Type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+    }
+
+    /// Send a DELETE request.
+    pub async fn delete(&self, uri: &str) -> TestResponse {
+        self.send(
+            Request::builder()
+                .uri(uri)
+                .method("DELETE")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+    }
+
+    /// Send a PATCH request.
+    pub async fn patch(&self, uri: &str) -> TestResponse {
+        self.send(
+            Request::builder()
+                .uri(uri)
+                .method("PATCH")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+    }
+
     /// Send a raw request.
     pub async fn send(&self, request: Request<Body>) -> TestResponse {
         let response = self.router.clone().oneshot(request).await.unwrap();
@@ -136,6 +186,45 @@ impl TestResponse {
     /// Assert the response status is 302 Found (redirect).
     pub fn assert_redirect(&self) {
         self.assert_status(StatusCode::FOUND);
+    }
+
+    /// Assert the response status is 401 Unauthorized.
+    pub fn assert_unauthorized(&self) {
+        self.assert_status(StatusCode::UNAUTHORIZED);
+    }
+
+    /// Assert the response status is 403 Forbidden.
+    pub fn assert_forbidden(&self) {
+        self.assert_status(StatusCode::FORBIDDEN);
+    }
+
+    /// Assert the response status is 404 Not Found.
+    pub fn assert_not_found(&self) {
+        self.assert_status(StatusCode::NOT_FOUND);
+    }
+
+    /// Assert the response status is 422 Unprocessable Entity.
+    pub fn assert_unprocessable(&self) {
+        self.assert_status(StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    /// Assert the response body does NOT contain the given string.
+    pub fn assert_dont_see(&self, needle: &str) {
+        assert!(
+            !self.body.contains(needle),
+            "Expected body NOT to contain '{}', but body was: {}",
+            needle,
+            self.body
+        );
+    }
+
+    /// Assert the response body is exactly the given string.
+    pub fn assert_exact(&self, expected: &str) {
+        assert_eq!(
+            self.body, expected,
+            "Expected body to be '{}', but was '{}'",
+            expected, self.body
+        );
     }
 }
 

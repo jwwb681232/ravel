@@ -8,3 +8,4 @@
 pub mod connection;
 pub mod migration;
 pub mod pagination;
+pub mod schema;

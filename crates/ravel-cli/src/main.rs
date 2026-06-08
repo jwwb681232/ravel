@@ -90,6 +90,8 @@ enum MakeCommands {
     Provider { name: String },
     /// Create a new FormRequest
     Request { name: String },
+    /// Create a new Job
+    Job { name: String },
 }
 
 #[derive(Subcommand)]
@@ -142,6 +144,11 @@ async fn main() -> Result<()> {
                 MakeCommands::Request { name } => {
                     g.scaffold_request(&name)?;
                     println!("✅ FormRequest created: {}", name);
+                }
+                MakeCommands::Job { name } => {
+                    g.ensure_dir("app/Jobs")?;
+                    g.scaffold_job(&name)?;
+                    println!("✅ Job created: {}", name);
                 }
             }
         }
