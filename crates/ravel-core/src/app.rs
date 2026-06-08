@@ -105,7 +105,8 @@ impl Application {
     /// Load TOML configuration from `dir` and store it both in the
     /// internal [`ConfigRepo`] and in the container (as a singleton).
     pub fn load_config(mut self, dir: impl AsRef<std::path::Path>) -> Result<Self> {
-        let repo = ConfigRepo::load_dir(dir)?;
+        let mut repo = ConfigRepo::load_dir(dir)?;
+        repo.apply_env_overrides();
         self.config = repo.clone();
         self.container.instance(repo);
         Ok(self)

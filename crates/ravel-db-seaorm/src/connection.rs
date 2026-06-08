@@ -22,7 +22,9 @@
 //! ```
 
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use parking_lot::RwLock;
+use ravel_db_core::connection::ConnectionManager as ConnectionManagerTrait;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use std::collections::HashMap;
 use std::path::Path;
@@ -193,6 +195,46 @@ impl ConnectionManager {
 impl Default for ConnectionManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ── ConnectionManager trait impl ─────────────────────────────────────
+
+#[async_trait]
+impl ConnectionManagerTrait for ConnectionManager {
+    type Conn = DatabaseConnection;
+
+    async fn connect(&self, name: &str) -> Result<Self::Conn> {
+        // Fast path: return cached connection
+        {
+            let conns = self.connections.read();
+            if let Some(db) = conns.get(name) {
+                return Ok(db.clone());
+            }
+        }
+
+        let config = self
+            .configs
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("No database config for '{name}'"))?;
+
+        let db = Database::connect(config.to_connect_options())
+            .await
+            .with_context(|| format!("Connecting to database '{name}'"))?;
+
+        self.connections
+            .write()
+            .insert(name.to_string(), db.clone());
+
+        Ok(db)
+    }
+
+    fn config_names(&self) -> Vec<&str> {
+        self.configs.keys().map(|s| s.as_str()).collect()
+    }
+
+    fn has_config(&self, name: &str) -> bool {
+        self.configs.contains_key(name)
     }
 }
 

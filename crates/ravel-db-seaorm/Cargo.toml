@@ -1,10 +1,11 @@
 [package]
-name = "ravel-db"
+name = "ravel-db-seaorm"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 ravel-core = { path = "../ravel-core" }
+ravel-db-core = { path = "../ravel-db-core" }
 sea-orm = "2.0.0-rc.40"
 sea-orm-migration = "2.0.0-rc.40"
 tokio = { version = "1", features = ["full"] }
@@ -14,3 +15,4 @@ anyhow = "1"
 chrono = "0.4"
 toml = "0.8"
 parking_lot = "0.12"
+async-trait = "0.1"

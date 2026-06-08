@@ -52,21 +52,31 @@ use axum::Json;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 
+use crate::error::RavelError;
 use crate::validation::{FieldRule, Validator};
 
 /// Trait for validated request structs.
 ///
 /// Implement this on a `#[derive(Deserialize)]` struct to define
 /// validation rules.  Use [`Validated<T>`](Validated) in your handler
-/// signature to trigger automatic parsing + validation.
+/// signature to trigger automatic parsing + validation:
+///
+/// ```rust,ignore
+/// async fn store(Validated(req): Validated<CreateUserRequest>) -> impl IntoResponse {
+///     format!("Hello, {}!", req.name)
+/// }
+/// ```
+///
+/// When validation fails, a [`RavelError`] is returned — the handler's
+/// return type should be `Result<impl IntoResponse, RavelError>`.
 pub trait FormRequest: DeserializeOwned + Send + 'static {
     /// Define validation rules for each field.
     fn rules() -> Vec<FieldRule>;
 
-    /// Check whether the request is authorized.
+    /// Check whether the request is authorised.
     ///
     /// Return `false` to reject the request with 403 Forbidden.
-    /// Default: `true` (always authorized).
+    /// Default: `true` (always authorised).
     fn authorize(&self) -> bool {
         true
     }
@@ -79,23 +89,37 @@ pub trait FormRequest: DeserializeOwned + Send + 'static {
     }
 }
 
+// ── Validated<T> extractor ───────────────────────────────────────────────
+
 /// An Axum extractor that parses JSON and validates it using [`FormRequest`].
 ///
-/// Use as `Validated(req)` in handler parameters.
+/// Use as `Validated(req)` in handler parameters.  Rejection is a
+/// [`RavelError`], so your handler should return
+/// `Result<impl IntoResponse, RavelError>`.
+///
+/// ```rust,ignore
+/// async fn store(
+///     Validated(req): Validated<CreateUserRequest>,
+/// ) -> Result<impl IntoResponse, RavelError> {
+///     Ok(format!("Hello, {}!", req.name))
+/// }
+/// ```
 #[derive(Debug)]
 pub struct Validated<T>(pub T);
 
 /// Rejection type for [`Validated`].
+///
+/// No longer used directly — [`Validated`] now rejects with [`RavelError`].
+/// Kept for backward compatibility.
+#[deprecated(since = "0.2.0", note = "`Validated<T>` now rejects with `RavelError`")]
 #[derive(Debug)]
 pub enum FormRequestRejection {
-    /// JSON parsing failed (400 Bad Request).
     BadRequest(String),
-    /// Authorization failed (403 Forbidden).
     Forbidden,
-    /// Validation failed (422 Unprocessable Entity).
     ValidationFailed(Vec<crate::validation::ValidationError>),
 }
 
+#[allow(deprecated)]
 impl IntoResponse for FormRequestRejection {
     fn into_response(self) -> Response {
         match self {
@@ -134,41 +158,40 @@ where
     S: Send + Sync + 'static,
     T: FormRequest,
 {
-    type Rejection = FormRequestRejection;
+    type Rejection = RavelError;
 
     async fn from_request(req: Request, _state: &S) -> Result<Self, Self::Rejection> {
-        // Read the body bytes.
         let (_parts, body) = req.into_parts();
         let bytes = axum::body::to_bytes(body, 1024 * 1024)
             .await
-            .map_err(|e| FormRequestRejection::BadRequest(format!("Failed to read body: {e}")))?;
+            .map_err(|e| RavelError::bad_request(format!("Failed to read body: {e}")))?;
 
-        // Parse JSON.
         let json_value: serde_json::Value = serde_json::from_slice(&bytes)
-            .map_err(|e| FormRequestRejection::BadRequest(format!("Invalid JSON: {e}")))?;
+            .map_err(|e| RavelError::bad_request(format!("Invalid JSON: {e}")))?;
 
-        // Validate.
         let rules = T::rules();
         let custom_messages = T::messages();
         let validator = Validator::new(rules);
 
-        if custom_messages.is_empty() {
-            validator
-                .validate(&json_value)
-                .map_err(FormRequestRejection::ValidationFailed)?;
+        let validation_result = if custom_messages.is_empty() {
+            validator.validate(&json_value)
         } else {
-            validator
-                .validate_with_messages(&json_value, &custom_messages)
-                .map_err(FormRequestRejection::ValidationFailed)?;
+            validator.validate_with_messages(&json_value, &custom_messages)
+        };
+
+        if let Err(errs) = validation_result {
+            let mut error_map: HashMap<String, Vec<String>> = HashMap::new();
+            for e in &errs {
+                error_map.entry(e.field.clone()).or_default().push(e.message.clone());
+            }
+            return Err(RavelError::ValidationError(error_map));
         }
 
-        // Deserialize into T.
         let parsed: T = serde_json::from_value(json_value)
-            .map_err(|e| FormRequestRejection::BadRequest(format!("Deserialization error: {e}")))?;
+            .map_err(|e| RavelError::bad_request(format!("Deserialization error: {e}")))?;
 
-        // Check authorization.
         if !parsed.authorize() {
-            return Err(FormRequestRejection::Forbidden);
+            return Err(RavelError::forbidden("Forbidden"));
         }
 
         Ok(Validated(parsed))
@@ -180,10 +203,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::RavelError;
     use crate::validation::{FieldRule, Rule};
     use axum::body::Body;
     use axum::http::Request;
-    use axum::response::IntoResponse;
     use serde::Deserialize;
 
     #[derive(Debug, Deserialize)]
@@ -304,10 +327,11 @@ mod tests {
         let req = make_json_request(r#"{}"#);
         let result = Validated::<CustomMsgForm>::from_request(req, &()).await;
         match result.unwrap_err() {
-            FormRequestRejection::ValidationFailed(errs) => {
-                assert_eq!(errs[0].message, "Please provide a name");
+            RavelError::ValidationError(errors) => {
+                assert_eq!(errors.get("name").unwrap()[0], "Please provide a name");
             }
             _ => panic!("Expected validation failure"),
         }
     }
+
 }

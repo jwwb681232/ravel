@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 anyhow = "1"
 chrono = "0.4"
+tera = "1"

@@ -1,7 +1,7 @@
 //! Task scheduler — cron-style recurring tasks.
 //!
 //! Define commands/closure callbacks that run on a schedule.
-//! Only supports in-process execution currently.
+//! Supports both in-process execution and pluggable driver backends.
 //!
 //! # Usage
 //!
@@ -10,15 +10,57 @@
 //!
 //! let mut sched = Scheduler::new();
 //! sched.call("cleanup", || { println!("cleanup!"); })
-//!      .every_minutes(5)
-//!      .name("Clean temp files");
+//!      .every_minutes(5);
 //!
 //! // In your application's main loop:
-//! sched.tick(); // checks if any tasks are due
+//! sched.tick();
 //! ```
 
+use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use std::sync::{Arc, Mutex};
+
+// ── SchedulerDriver trait ────────────────────────────────────────────────
+
+/// Pluggable scheduler backend.
+///
+/// Implement this to persist scheduled tasks to Redis, a database, etc.
+#[async_trait]
+pub trait SchedulerDriver: Send + Sync {
+    /// Record that a task with this id was executed at this time.
+    async fn heartbeat(&self, task_id: &str, at: DateTime<Utc>) -> anyhow::Result<()>;
+
+    /// Return the last execution time for a task, if known.
+    async fn last_run(&self, task_id: &str) -> anyhow::Result<Option<DateTime<Utc>>>;
+}
+
+// ── In-memory driver ────────────────────────────────────────────────────
+
+struct MemorySchedulerDriver {
+    last_runs: Mutex<std::collections::HashMap<String, DateTime<Utc>>>,
+}
+
+impl MemorySchedulerDriver {
+    fn new() -> Self {
+        Self {
+            last_runs: Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl SchedulerDriver for MemorySchedulerDriver {
+    async fn heartbeat(&self, task_id: &str, at: DateTime<Utc>) -> anyhow::Result<()> {
+        self.last_runs.lock().unwrap().insert(task_id.into(), at);
+        Ok(())
+    }
+
+    async fn last_run(&self, task_id: &str) -> anyhow::Result<Option<DateTime<Utc>>> {
+        Ok(self.last_runs.lock().unwrap().get(task_id).copied())
+    }
+}
+
+// ── Task ────────────────────────────────────────────────────────────────
 
 /// A scheduled task.
 pub struct Task {
@@ -28,19 +70,34 @@ pub struct Task {
     next_run: Mutex<DateTime<Utc>>,
 }
 
+// ── Scheduler ────────────────────────────────────────────────────────────
+
 /// The scheduler that holds tasks and checks if any are due.
 pub struct Scheduler {
     tasks: Vec<Task>,
+    driver: Arc<dyn SchedulerDriver>,
 }
 
 impl Scheduler {
+    /// Create a scheduler with the in-memory driver.
     pub fn new() -> Self {
-        Self { tasks: Vec::new() }
+        Self {
+            tasks: Vec::new(),
+            driver: Arc::new(MemorySchedulerDriver::new()),
+        }
+    }
+
+    /// Create a scheduler with a custom driver.
+    pub fn with_driver(driver: impl SchedulerDriver + 'static) -> Self {
+        Self {
+            tasks: Vec::new(),
+            driver: Arc::new(driver),
+        }
     }
 
     /// Register a closure to run on a schedule.
     ///
-    /// Returns a [`TaskBuilder`] to set the interval and description.
+    /// Returns a [`TaskBuilder`] to set the interval.
     pub fn call<F>(&mut self, name: &str, f: F) -> TaskBuilder<'_>
     where
         F: Fn() + Send + Sync + 'static,
@@ -50,6 +107,11 @@ impl Scheduler {
             name: name.to_string(),
             callback: Arc::new(f),
         }
+    }
+
+    /// Register a task with a custom interval.
+    pub fn add_task(&mut self, task: Task) {
+        self.tasks.push(task);
     }
 
     /// Check all tasks and run any that are due.
@@ -75,6 +137,11 @@ impl Scheduler {
     pub fn is_empty(&self) -> bool {
         self.tasks.is_empty()
     }
+
+    /// Get a reference to the driver.
+    pub fn driver(&self) -> &Arc<dyn SchedulerDriver> {
+        &self.driver
+    }
 }
 
 impl Default for Scheduler {
@@ -83,7 +150,7 @@ impl Default for Scheduler {
     }
 }
 
-// ── TaskBuilder ────────────────────────────────────────────────────
+// ── TaskBuilder ──────────────────────────────────────────────────────────
 
 /// Fluent builder for scheduled tasks.
 pub struct TaskBuilder<'a> {
@@ -94,7 +161,6 @@ pub struct TaskBuilder<'a> {
 
 impl TaskBuilder<'_> {
     /// Run the task every `minutes` minutes.
-    /// Returns the task name.
     pub fn every_minutes(self, minutes: i64) -> String {
         let name = self.name.clone();
         let task = Task {
@@ -108,7 +174,6 @@ impl TaskBuilder<'_> {
     }
 
     /// Run the task every `hours` hours.
-    /// Returns the task name.
     pub fn every_hours(self, hours: i64) -> String {
         let name = self.name.clone();
         let task = Task {
@@ -122,13 +187,12 @@ impl TaskBuilder<'_> {
     }
 
     /// Run the task once per day at midnight UTC.
-    /// Returns the task name.
     pub fn daily(self) -> String {
         self.every_hours(24)
     }
 }
 
-// ── Tests ──────────────────────────────────────────────────────────
+// ── Tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -142,10 +206,15 @@ mod tests {
         let c2 = counter.clone();
 
         let mut sched = Scheduler::new();
-        // Two tasks that both increment the counter
-        sched.call("task_a", move || { c.fetch_add(1, Ordering::SeqCst); })
+        sched
+            .call("task_a", move || {
+                c.fetch_add(1, Ordering::SeqCst);
+            })
             .every_minutes(5);
-        sched.call("task_b", move || { c2.fetch_add(10, Ordering::SeqCst); })
+        sched
+            .call("task_b", move || {
+                c2.fetch_add(10, Ordering::SeqCst);
+            })
             .every_minutes(5);
 
         // Force the next_run time into the past so tick() executes them
@@ -155,10 +224,8 @@ mod tests {
         }
 
         sched.tick();
-        sched.tick(); // second tick shouldn't fire again (interval on the future now)
+        sched.tick(); // second tick shouldn't fire again
 
-        // Both tasks should have fired exactly once
-        // task_a +1, task_b +10 = 11
         assert_eq!(counter.load(Ordering::SeqCst), 11);
     }
 
@@ -168,10 +235,22 @@ mod tests {
         let c = counter.clone();
 
         let mut sched = Scheduler::new();
-        sched.call("future_task", move || { c.fetch_add(1, Ordering::SeqCst); })
-            .every_minutes(60); // not due yet
+        sched
+            .call("future_task", move || {
+                c.fetch_add(1, Ordering::SeqCst);
+            })
+            .every_minutes(60);
 
         sched.tick();
         assert_eq!(counter.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn test_scheduler_len() {
+        let mut sched = Scheduler::new();
+        assert!(sched.is_empty());
+        sched.call("a", || {}).every_minutes(1);
+        sched.call("b", || {}).every_minutes(2);
+        assert_eq!(sched.len(), 2);
     }
 }

@@ -117,6 +117,48 @@ impl ConfigRepo {
         self.entries.iter()
     }
 
+    /// Apply environment variable overrides.
+    ///
+    /// Variables with the `APP_` prefix are converted to dot-notation keys
+    /// and override any values loaded from TOML files:
+    ///
+    /// - `APP_SERVER_HOST` → `server.host`
+    /// - `APP_DATABASE_PORT` → `database.port`
+    /// - `APP_NAME` → `name`
+    /// - `APP_DEBUG` → `debug`
+    ///
+    /// Variables without the `APP_` prefix are silently ignored.
+    pub fn apply_env_overrides(&mut self) {
+        for (key, value) in std::env::vars() {
+            if let Some(dotted) = Self::env_key_to_dotted(&key) {
+                self.set(dotted, serde_json::Value::String(value));
+            }
+        }
+    }
+
+    /// Convert an env-var name to a dot-notation config key.
+    ///
+    /// Returns `None` if the variable does not start with `APP_`.
+    ///
+    /// ```
+    /// # use ravel_core::config::ConfigRepo;
+    /// assert_eq!(ConfigRepo::env_key_to_dotted("APP_SERVER_HOST"), Some("server.host".into()));
+    /// assert_eq!(ConfigRepo::env_key_to_dotted("APP_NAME"), Some("name".into()));
+    /// assert_eq!(ConfigRepo::env_key_to_dotted("PATH"), None);
+    /// ```
+    pub fn env_key_to_dotted(key: &str) -> Option<String> {
+        let rest = key.strip_prefix("APP_")?;
+        if rest.is_empty() {
+            return None;
+        }
+        let parts: Vec<&str> = rest.splitn(2, '_').collect();
+        let dotted = match parts.len() {
+            1 => parts[0].to_lowercase(),
+            _ => format!("{}.{}", parts[0].to_lowercase(), parts[1].to_lowercase()),
+        };
+        Some(dotted)
+    }
+
     // ── internals ───────────────────────────────────────────────────
 
     /// Flatten a `toml::Table` into dot-notation keys and merge into `self`.
@@ -250,5 +292,103 @@ port = 9000
 
         let hosts: Vec<String> = repo.get("app.allowed_hosts").unwrap();
         assert_eq!(hosts, vec!["a.com", "b.com"]);
+    }
+
+    // ── env_key_to_dotted ──────────────────────────────────────────
+
+    #[test]
+    fn test_env_key_simple() {
+        assert_eq!(
+            ConfigRepo::env_key_to_dotted("APP_NAME"),
+            Some("name".into())
+        );
+    }
+
+    #[test]
+    fn test_env_key_nested() {
+        assert_eq!(
+            ConfigRepo::env_key_to_dotted("APP_SERVER_HOST"),
+            Some("server.host".into())
+        );
+        assert_eq!(
+            ConfigRepo::env_key_to_dotted("APP_DATABASE_PORT"),
+            Some("database.port".into())
+        );
+    }
+
+    #[test]
+    fn test_env_key_three_segments() {
+        // Only splits on first underscore after APP_
+        assert_eq!(
+            ConfigRepo::env_key_to_dotted("APP_DATABASE_MAX_CONNECTIONS"),
+            Some("database.max_connections".into())
+        );
+    }
+
+    #[test]
+    fn test_env_key_non_app_ignored() {
+        assert_eq!(ConfigRepo::env_key_to_dotted("PATH"), None);
+        assert_eq!(ConfigRepo::env_key_to_dotted("HOME"), None);
+        assert_eq!(ConfigRepo::env_key_to_dotted("SERVER_PORT"), None);
+    }
+
+    #[test]
+    fn test_env_key_empty_prefix() {
+        assert_eq!(ConfigRepo::env_key_to_dotted("APP_"), None);
+    }
+
+    // ── apply_env_overrides ────────────────────────────────────────
+
+    #[test]
+    fn test_apply_env_overrides_simple() {
+        unsafe {
+            std::env::set_var("APP_NAME", "EnvApp");
+            std::env::set_var("APP_PORT", "9999");
+        }
+
+        let mut repo = ConfigRepo::new();
+        repo.set("name", "TomlApp");
+        repo.apply_env_overrides();
+
+        assert_eq!(repo.get::<String>("name").unwrap(), "EnvApp");
+        assert_eq!(repo.get::<String>("port").unwrap(), "9999");
+
+        unsafe {
+            std::env::remove_var("APP_NAME");
+            std::env::remove_var("APP_PORT");
+        }
+    }
+
+    #[test]
+    fn test_apply_env_overrides_nested() {
+        unsafe {
+            std::env::set_var("APP_SERVER_HOST", "0.0.0.0");
+        }
+
+        let mut repo = ConfigRepo::new();
+        repo.set("server.host", "127.0.0.1");
+        repo.set("server.port", 3000u16);
+        repo.apply_env_overrides();
+
+        assert_eq!(repo.get::<String>("server.host").unwrap(), "0.0.0.0");
+        // server.port should remain unchanged (not overridden by env)
+        assert_eq!(repo.get::<u16>("server.port").unwrap(), 3000);
+
+        unsafe {
+            std::env::remove_var("APP_SERVER_HOST");
+        }
+    }
+
+    #[test]
+    fn test_apply_env_overrides_ignores_non_app() {
+        // PATH is always set — make sure it doesn't pollute config
+        let mut repo = ConfigRepo::new();
+        repo.set("server.host", "127.0.0.1");
+        repo.apply_env_overrides();
+
+        assert_eq!(repo.get::<String>("server.host").unwrap(), "127.0.0.1");
+        // Non-APP_ vars should not create entries
+        assert!(!repo.has("path"));
+        assert!(!repo.has("home"));
     }
 }

@@ -1,0 +1,10 @@
+[package]
+name = "ravel-db-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"

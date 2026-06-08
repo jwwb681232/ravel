@@ -14,22 +14,43 @@
 //! - `{{kebab}}` — kebab-case version
 //! - `{{timestamp}}` — current UTC timestamp (for migrations)
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use std::fs;
 use std::path::{Path, PathBuf};
+use tera::{Context as TeraContext, Tera};
 
 // ── Generator ─────────────────────────────────────────────────────
 
 /// The scaffolding engine, rooted at a project directory.
 pub struct Generator {
     root: PathBuf,
+    tera: Tera,
 }
 
 impl Generator {
     /// Create a generator targeting `root` as the project root.
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        let mut tera = Tera::default();
+        // Register all built-in templates
+        tera.add_raw_template("controller", CONTROLLER_TEMPLATE).unwrap();
+        tera.add_raw_template("middleware", MIDDLEWARE_TEMPLATE).unwrap();
+        tera.add_raw_template("migration", MIGRATION_TEMPLATE).unwrap();
+        tera.add_raw_template("seeder", SEEDER_TEMPLATE).unwrap();
+        tera.add_raw_template("provider", PROVIDER_TEMPLATE).unwrap();
+        tera.add_raw_template("request", REQUEST_TEMPLATE).unwrap();
+        tera.add_raw_template("model", MODEL_TEMPLATE).unwrap();
+        tera.add_raw_template("cargo_toml", CARGO_TOML_TEMPLATE).unwrap();
+        tera.add_raw_template("main_rs", MAIN_RS_TEMPLATE).unwrap();
+        tera.add_raw_template("app_toml", APP_TOML_TEMPLATE).unwrap();
+        tera.add_raw_template("env", ENV_TEMPLATE).unwrap();
+        tera.add_raw_template("migrator", MIGRATOR_TEMPLATE).unwrap();
+        tera.add_raw_template("migrate_bin", MIGRATE_BIN_TEMPLATE).unwrap();
+        tera.add_raw_template("seed_bin", SEED_BIN_TEMPLATE).unwrap();
+        Self {
+            root: root.into(),
+            tera,
+        }
     }
 
     /// Return the project root.
@@ -72,38 +93,47 @@ impl Generator {
         Ok(())
     }
 
-    // ── Template variables ──────────────────────────────────────
+    // ── Template rendering ───────────────────────────────────────
 
-    /// Render `template` with the given name-derived variables.
-    pub fn render(&self, template: &str, name: &str) -> String {
+    /// Build a Tera context with name-derived variables.
+    fn make_context(name: &str) -> TeraContext {
         let snake = to_snake(name);
         let kebab = to_kebab(name);
         let timestamp = Utc::now().format("%Y_%m_%d_%H%M%S").to_string();
 
-        template
-            .replace("{{timestamp}}", &timestamp)
-            .replace("{{name}}", name)
-            .replace("{{snake}}", &snake)
-            .replace("{{kebab}}", &kebab)
+        let mut ctx = TeraContext::new();
+        ctx.insert("name", name);
+        ctx.insert("snake", &snake);
+        ctx.insert("kebab", &kebab);
+        ctx.insert("timestamp", &timestamp);
+        ctx
+    }
+
+    /// Render a built-in template by name with the given name-derived variables.
+    pub fn render(&self, template_name: &str, name: &str) -> Result<String> {
+        let ctx = Self::make_context(name);
+        self.tera
+            .render(template_name, &ctx)
+            .with_context(|| format!("Failed to render template '{template_name}'"))
     }
 
     // ── Built-in scaffolds ──────────────────────────────────────
 
     /// Generate a Controller file.
     pub fn scaffold_controller(&self, name: &str) -> Result<()> {
-        let content = self.render(CONTROLLER_TEMPLATE, name);
+        let content = self.render("controller", name)?;
         self.create_file(&format!("app/Http/Controllers/{name}.rs"), &content)
     }
 
     /// Generate a Middleware file.
     pub fn scaffold_middleware(&self, name: &str) -> Result<()> {
-        let content = self.render(MIDDLEWARE_TEMPLATE, name);
+        let content = self.render("middleware", name)?;
         self.create_file(&format!("app/Http/Middleware/{name}.rs"), &content)
     }
 
     /// Generate a Migration file (timestamped).
     pub fn scaffold_migration(&self, name: &str) -> Result<()> {
-        let content = self.render(MIGRATION_TEMPLATE, name);
+        let content = self.render("migration", name)?;
         let timestamp = Utc::now().format("%Y_%m_%d_%H%M%S");
         let snake = to_snake(name);
         self.create_file(
@@ -114,25 +144,25 @@ impl Generator {
 
     /// Generate a Seeder file.
     pub fn scaffold_seeder(&self, name: &str) -> Result<()> {
-        let content = self.render(SEEDER_TEMPLATE, name);
+        let content = self.render("seeder", name)?;
         self.create_file(&format!("database/seeders/{name}.rs"), &content)
     }
 
     /// Generate a ServiceProvider file.
     pub fn scaffold_provider(&self, name: &str) -> Result<()> {
-        let content = self.render(PROVIDER_TEMPLATE, name);
+        let content = self.render("provider", name)?;
         self.create_file(&format!("app/Providers/{name}.rs"), &content)
     }
 
     /// Generate a FormRequest file.
     pub fn scaffold_request(&self, name: &str) -> Result<()> {
-        let content = self.render(REQUEST_TEMPLATE, name);
+        let content = self.render("request", name)?;
         self.create_file(&format!("app/Http/Requests/{name}.rs"), &content)
     }
 
     /// Generate a Model file (SeaORM entity).
     pub fn scaffold_model(&self, name: &str) -> Result<()> {
-        let content = self.render(MODEL_TEMPLATE, name);
+        let content = self.render("model", name)?;
         self.create_file(&format!("app/Models/{name}.rs"), &content)
     }
 
@@ -163,22 +193,22 @@ impl Generator {
         // Cargo.toml
         self.overwrite_file(
             "Cargo.toml",
-            &self.render(CARGO_TOML_TEMPLATE, project_name),
+            &self.render("cargo_toml", project_name)?,
         )?;
 
         // src/main.rs
-        self.overwrite_file("src/main.rs", &self.render(MAIN_RS_TEMPLATE, project_name))?;
+        self.overwrite_file("src/main.rs", &self.render("main_rs", project_name)?)?;
 
         // Default config file
-        self.overwrite_file("config/app.toml", APP_TOML_TEMPLATE)?;
+        self.overwrite_file("config/app.toml", &self.render("app_toml", project_name)?)?;
 
         // Default .env
         if !self.exists(".env") {
-            self.overwrite_file(".env", ENV_TEMPLATE)?;
+            self.overwrite_file(".env", &self.render("env", project_name)?)?;
         }
 
         // .env.example (always overwrite to keep in sync)
-        self.overwrite_file(".env.example", ENV_TEMPLATE)?;
+        self.overwrite_file(".env.example", &self.render("env", project_name)?)?;
 
         // Database migrator (database/migrations/mod.rs)
         if !self.exists("database/migrations/mod.rs") {
@@ -464,7 +494,7 @@ impl MigratorTrait for Migrator {
 const MIGRATE_BIN_TEMPLATE: &str = r#"use std::env;
 use sea_orm::Database;
 use sea_orm_migration::MigratorTrait;
-use ravel_db::connection::ConnectionManager;
+use ravel_db_seaorm::connection::ConnectionManager;
 
 #[path = "../../database/migrations/mod.rs"]
 mod migrations;
@@ -514,7 +544,7 @@ async fn main() -> anyhow::Result<()> {
 "#;
 
 const SEED_BIN_TEMPLATE: &str = r#"use sea_orm::Database;
-use ravel_db::connection::ConnectionManager;
+use ravel_db_seaorm::connection::ConnectionManager;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -553,11 +583,15 @@ mod tests {
 
     #[test]
     fn test_render() {
-        let g = Generator::new("/tmp/test");
-        let output = g.render("Hello {{name}}, your file is {{snake}}.rs", "UserController");
+        let mut g = Generator::new("/tmp/test");
+        // Register a test template then render it
+        g.tera
+            .add_raw_template("test_tpl", "Hello {{ name }}, your file is {{ snake }}.rs")
+            .unwrap();
+        let output = g.render("test_tpl", "UserController").unwrap();
         assert!(output.contains("UserController"));
         assert!(output.contains("user_controller.rs"));
-        assert!(!output.contains("{{name}}"));
+        assert!(!output.contains("{{ name }}"));
     }
 
     #[test]
