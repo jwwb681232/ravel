@@ -54,6 +54,31 @@ impl RavelRequest {
         }
     }
 
+    /// Create a RavelRequest from a reference to an Axum request (without consuming it).
+    /// Used by middleware to capture request metadata for facades.
+    pub fn from_request_ref(req: &Request<Body>) -> Self {
+        let query_params = req
+            .uri()
+            .query()
+            .map(|qs| {
+                url::form_urlencoded::parse(qs.as_bytes())
+                    .into_owned()
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Clone request metadata (method, uri, headers) without consuming the body.
+        let mut cloned = Request::new(Body::empty());
+        *cloned.uri_mut() = req.uri().clone();
+        *cloned.method_mut() = req.method().clone();
+        *cloned.headers_mut() = req.headers().clone();
+
+        Self {
+            inner: cloned,
+            query_params,
+        }
+    }
+
     /// Return the HTTP method (e.g. `"GET"`, `"POST"`).
     pub fn method(&self) -> &str {
         self.inner.method().as_str()

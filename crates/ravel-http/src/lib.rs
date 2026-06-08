@@ -15,6 +15,7 @@ pub mod controller;
 pub mod cookie;
 pub mod csrf;
 pub mod error;
+pub mod facades;
 pub mod form_request;
 pub mod jwt;
 pub mod lifecycle;
