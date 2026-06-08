@@ -2,6 +2,14 @@
 name = "ravel-core"
 version = "0.1.0"
 edition = "2024"
+description = "Core framework for Ravel: DI container, config, env, events, cache, encryption, password hashing, structured logging"
+license = "MIT"
+repository = "https://github.com/jwwb681232/ravel"
+homepage = "https://github.com/jwwb681232/ravel"
+documentation = "https://docs.rs/ravel-core"
+keywords = ["ravel", "di", "container", "config", "encryption"]
+categories = ["web-programming", "development-tools"]
+readme = "../../README.md"
 
 [dependencies]
 anyhow = "1"

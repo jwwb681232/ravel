@@ -2,6 +2,14 @@
 name = "ravel-http"
 version = "0.1.0"
 edition = "2024"
+description = "HTTP layer for Ravel: route builder, server, middleware, session, auth, CSRF, rate limiting, file upload, validation"
+license = "MIT"
+repository = "https://github.com/jwwb681232/ravel"
+homepage = "https://github.com/jwwb681232/ravel"
+documentation = "https://docs.rs/ravel-http"
+keywords = ["ravel", "http", "router", "middleware", "session", "auth"]
+categories = ["web-programming::http-server", "web-programming"]
+readme = "../../README.md"
 
 [dependencies]
 ravel-core = { path = "../ravel-core" }

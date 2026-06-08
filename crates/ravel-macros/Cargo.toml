@@ -2,6 +2,14 @@
 name = "ravel-macros"
 version = "0.1.0"
 edition = "2024"
+description = "Procedural macros for Ravel: #[derive(Job)] and more"
+license = "MIT"
+repository = "https://github.com/jwwb681232/ravel"
+homepage = "https://github.com/jwwb681232/ravel"
+documentation = "https://docs.rs/ravel-macros"
+keywords = ["ravel", "macro", "derive", "job"]
+categories = ["development-tools::procedural-macro-helpers", "web-programming"]
+readme = "../../README.md"
 
 [lib]
 proc-macro = true

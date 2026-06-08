@@ -2,6 +2,14 @@
 name = "ravel-cli"
 version = "0.1.0"
 edition = "2024"
+description = "CLI tool for the Ravel framework: project scaffolding, code generation, migrations, dev server"
+license = "MIT"
+repository = "https://github.com/jwwb681232/ravel"
+homepage = "https://github.com/jwwb681232/ravel"
+documentation = "https://docs.rs/ravel-cli"
+keywords = ["ravel", "cli", "scaffold", "generator", "web"]
+categories = ["command-line-utilities", "web-programming"]
+readme = "../../README.md"
 
 [dependencies]
 ravel-generator = { path = "../ravel-generator" }

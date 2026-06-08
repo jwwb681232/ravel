@@ -2,6 +2,14 @@
 name = "ravel-test"
 version = "0.1.0"
 edition = "2024"
+description = "Test utilities for Ravel applications: TestClient, response assertions, integration test helpers"
+license = "MIT"
+repository = "https://github.com/jwwb681232/ravel"
+homepage = "https://github.com/jwwb681232/ravel"
+documentation = "https://docs.rs/ravel-test"
+keywords = ["ravel", "test", "http", "integration", "assertions"]
+categories = ["development-tools::testing", "web-programming"]
+readme = "../../README.md"
 
 [dependencies]
 axum = "0.8"
