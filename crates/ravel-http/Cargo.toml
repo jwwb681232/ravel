@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 ravel-core = { path = "../ravel-core" }
-axum = "0.8"
+axum = { version = "0.8", features = ["multipart"] }
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
@@ -19,6 +19,7 @@ rand = "0.8"
 base64 = "0.22"
 hmac = "0.12"
 sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
