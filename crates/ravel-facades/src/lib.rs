@@ -17,3 +17,16 @@ pub mod session;
 pub mod auth;
 pub mod storage;
 pub mod utils;
+
+/// Extension trait for Application to register services from ravel-support.
+pub trait ApplicationExt: Sized {
+    fn with_queue(self) -> Self;
+}
+
+impl ApplicationExt for ravel_core::app::Application {
+    fn with_queue(self) -> Self {
+        use ravel_support::queue::Queue;
+        self.container().instance(Queue::memory());
+        self
+    }
+}

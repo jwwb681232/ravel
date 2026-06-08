@@ -1,18 +1,31 @@
+//! Queue facade — job queue dispatch.
 use anyhow::Result;
+use ravel_core::app::APP;
+use ravel_support::queue::{Job, Queue as QueueEngine};
+use std::sync::Arc;
 
 pub struct Queue;
 
 impl Queue {
-    pub fn dispatch<J: serde::Serialize>(_job: J) -> Result<()> {
-        unimplemented!()
+    fn engine() -> Arc<QueueEngine> {
+        let app = APP.get().expect("Application not booted");
+        app.container()
+            .resolve::<QueueEngine>()
+            .expect("Queue not registered — use ApplicationExt::with_queue() before boot")
     }
-    pub fn dispatch_later<J: serde::Serialize>(
-        _job: J,
-        _delay: chrono::Duration,
-    ) -> Result<()> {
-        unimplemented!()
+
+    pub fn dispatch<J: Job + serde::Serialize>(job: J) -> Result<()> {
+        let engine = Self::engine();
+        tokio::runtime::Handle::current().block_on(engine.dispatch(job))
     }
+
+    pub fn dispatch_later<J: Job + serde::Serialize>(job: J, delay: chrono::Duration) -> Result<()> {
+        let engine = Self::engine();
+        tokio::runtime::Handle::current().block_on(engine.dispatch_later(job, delay))
+    }
+
     pub fn pending() -> Result<usize> {
-        unimplemented!()
+        let engine = Self::engine();
+        Ok(tokio::runtime::Handle::current().block_on(engine.pending()))
     }
 }
