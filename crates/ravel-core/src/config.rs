@@ -220,6 +220,12 @@ fn toml_value_to_json(v: &toml::Value) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     #[test]
     fn test_empty_repo() {
@@ -341,6 +347,7 @@ port = 9000
 
     #[test]
     fn test_apply_env_overrides_simple() {
+        let _l = env_lock();
         unsafe {
             std::env::set_var("APP_NAME", "EnvApp");
             std::env::set_var("APP_PORT", "9999");
@@ -361,6 +368,7 @@ port = 9000
 
     #[test]
     fn test_apply_env_overrides_nested() {
+        let _l = env_lock();
         unsafe {
             std::env::set_var("APP_SERVER_HOST", "0.0.0.0");
         }
@@ -381,6 +389,7 @@ port = 9000
 
     #[test]
     fn test_apply_env_overrides_ignores_non_app() {
+        let _l = env_lock();
         // PATH is always set — make sure it doesn't pollute config
         let mut repo = ConfigRepo::new();
         repo.set("server.host", "127.0.0.1");

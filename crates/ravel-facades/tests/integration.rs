@@ -4,7 +4,15 @@ use ravel_core::app::ServiceProvider;
 use ravel_core::container::Container;
 use ravel_facades::response;
 use ravel_facades::{Cache, Config, Hash, Route, env, env_or, now, redirect};
+use std::sync::Mutex;
 use std::time::Duration;
+
+/// Serialize tests that share the global APP singleton.
+static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock() -> std::sync::MutexGuard<'static, ()> {
+    TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 // Helper: provider that registers routes via the Route facade
 struct TestProvider;
@@ -23,6 +31,7 @@ impl ServiceProvider for TestProvider {
 
 #[test]
 fn test_config_get_after_boot() {
+    let _l = lock();
     Route::reset();
     ravel_core::app::APP.reset();
     Application::new()
@@ -30,13 +39,13 @@ fn test_config_get_after_boot() {
         .boot()
         .unwrap();
 
-    // Config::get on nonexistent key returns None (no panic)
     let val: Option<String> = Config::get("nonexistent.key");
     assert_eq!(val, None);
 }
 
 #[test]
 fn test_config_get_or_with_default() {
+    let _l = lock();
     Route::reset();
     ravel_core::app::APP.reset();
     Application::new()
@@ -52,6 +61,7 @@ fn test_config_get_or_with_default() {
 
 #[test]
 fn test_cache_put_and_get() {
+    let _l = lock();
     Route::reset();
     ravel_core::app::APP.reset();
     Application::new()
@@ -71,6 +81,7 @@ fn test_cache_put_and_get() {
 
 #[test]
 fn test_cache_miss() {
+    let _l = lock();
     Route::reset();
     ravel_core::app::APP.reset();
     Application::new()
@@ -85,6 +96,7 @@ fn test_cache_miss() {
 
 #[test]
 fn test_cache_has_and_forget() {
+    let _l = lock();
     Route::reset();
     ravel_core::app::APP.reset();
     Application::new()
@@ -104,6 +116,7 @@ fn test_cache_has_and_forget() {
 
 #[test]
 fn test_hash_make_and_check() {
+    let _l = lock();
     ravel_core::app::APP.reset();
     Application::new().boot().unwrap();
 
@@ -116,8 +129,9 @@ fn test_hash_make_and_check() {
 
 #[test]
 fn test_route_facade_builds_router() {
+    let _l = lock();
     ravel_core::app::APP.reset();
-    Route::reset(); // Clear previous test's routes
+    Route::reset();
 
     Application::new()
         .register_provider(TestProvider)
@@ -125,7 +139,6 @@ fn test_route_facade_builds_router() {
         .unwrap();
 
     let router = Route::build();
-    // Router should be non-empty (has at least one route)
     assert!(!format!("{:?}", router).is_empty());
 }
 
@@ -141,7 +154,6 @@ fn test_now_returns_current_time() {
 
 #[test]
 fn test_env_returns_value_or_none() {
-    // SAFETY: test environment — no concurrent access to the same variables.
     unsafe { std::env::set_var("RAVEL_FACADE_TEST_VAR", "hello") };
     assert_eq!(env("RAVEL_FACADE_TEST_VAR"), Some("hello".to_string()));
     assert_eq!(env("RAVEL_NONEXISTENT_VAR_XYZ"), None);
@@ -209,6 +221,7 @@ fn test_collection_implode() {
 #[test]
 #[should_panic(expected = "MemoryCache not registered")]
 fn test_cache_panics_without_with_cache() {
+    let _l = lock();
     ravel_core::app::APP.reset();
     Application::new().boot().unwrap();
     Cache::put("key", "val".to_string(), None);
@@ -217,7 +230,7 @@ fn test_cache_panics_without_with_cache() {
 #[test]
 #[should_panic(expected = "Application not booted")]
 fn test_facades_panic_before_boot() {
-    // APP is empty — Config::get should panic
+    let _l = lock();
     ravel_core::app::APP.reset();
     Config::get::<String>("any.key");
 }
