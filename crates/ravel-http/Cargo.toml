@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/jwwb681232/ravel"
 homepage = "https://github.com/jwwb681232/ravel"
 documentation = "https://docs.rs/ravel-http"
-keywords = ["ravel", "http", "router", "middleware", "session", "auth"]
+keywords = ["ravel", "http", "router", "middleware", "session"]
 categories = ["web-programming::http-server", "web-programming"]
 readme = "../../README.md"
 
