@@ -152,9 +152,9 @@ mod tests {
     fn test_verify_tampered_token() {
         let csrf = Csrf::new(b"test-key-32-bytes-long!!!!!!");
         let token = csrf.generate();
-        // Flip the first base64 char to guarantee tampering (the original
-        // `.replace('a', "b")` was a no-op when the token lacked 'a' chars).
-        let tampered = format!("X{}", &token[1..]);
+        // Flip the HMAC part: tamper the signature so it always fails
+        let (payload, _sig) = token.split_once('.').unwrap();
+        let tampered = format!("{}.BADSIGNATURE", payload);
         assert!(!csrf.verify(&tampered));
     }
 
