@@ -46,7 +46,7 @@ impl CookieJar {
         self.cookies.iter()
     }
 
-    fn parse(cookie_header: &str) -> Self {
+    pub(crate) fn parse(cookie_header: &str) -> Self {
         let mut cookies = HashMap::new();
         for pair in cookie_header.split(';') {
             let pair = pair.trim();

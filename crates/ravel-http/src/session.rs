@@ -37,7 +37,7 @@ use tower::Layer;
 // ── Session data ────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct SessionData {
+pub(crate) struct SessionData {
     values: HashMap<String, serde_json::Value>,
     flash: HashMap<String, serde_json::Value>,
     #[serde(default)]
@@ -191,8 +191,8 @@ where
 /// Must be used after [`SessionLayer`] is applied to the route.
 #[derive(Debug)]
 pub struct Session {
-    data: SessionData,
-    dirty: bool,
+    pub(crate) data: SessionData,
+    pub(crate) dirty: bool,
 }
 
 impl Session {
