@@ -31,6 +31,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use tracing::{error, warn};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -355,7 +356,7 @@ impl Queue {
         let handler = match registry.get(&job.job_type) {
             Some(h) => h.clone(),
             None => {
-                eprintln!("[queue] unregistered job type '{}', skipping", job.job_type);
+                warn!("unregistered job type '{}', skipping", job.job_type);
                 return;
             }
         };
@@ -367,8 +368,8 @@ impl Queue {
             }
             Err(e) => {
                 let error_msg = format!("{e:?}");
-                eprintln!(
-                    "[queue] job '{}' ({}) attempt {}/{} failed: {error_msg}",
+                error!(
+                    "job '{}' ({}) attempt {}/{} failed: {error_msg}",
                     job.job_type, job.id, job.attempts + 1, job.max_attempts
                 );
 
@@ -382,8 +383,8 @@ impl Queue {
                         failed_at: Utc::now(),
                         attempts: job.attempts + 1,
                     });
-                    eprintln!(
-                        "[queue] job '{}' ({}) permanently failed after {} attempts",
+                    error!(
+                        "job '{}' ({}) permanently failed after {} attempts",
                         job.job_type, job.id, job.attempts + 1
                     );
                 } else {

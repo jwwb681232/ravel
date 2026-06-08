@@ -16,6 +16,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use std::collections::HashMap;
+use tracing::error;
 
 /// Unified error type that maps to HTTP responses.
 #[derive(Debug)]
@@ -94,7 +95,7 @@ impl IntoResponse for RavelError {
             )
                 .into_response(),
             Self::Internal(e) => {
-                eprintln!("[ravel] Internal error: {e:?}");
+                error!("Internal error: {e:?}");
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(serde_json::json!({

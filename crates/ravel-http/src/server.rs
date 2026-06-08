@@ -28,6 +28,7 @@ use anyhow::{Context, Result};
 use axum::Router;
 use std::future::Future;
 use std::pin::Pin;
+use tracing::{info, warn};
 
 /// Start the HTTP server, binding to `addr` (e.g. `"127.0.0.1:3000"`).
 ///
@@ -101,10 +102,10 @@ impl ServerBuilder {
         self.with_graceful_shutdown_signal(async {
             match tokio::signal::ctrl_c().await {
                 Ok(()) => {
-                    println!("\nShutting down gracefully...");
+                    info!("Shutting down gracefully...");
                 }
                 Err(e) => {
-                    eprintln!("[ravel] Ctrl+C handler unavailable: {e}");
+                    warn!("Ctrl+C handler unavailable: {e}");
                 }
             }
         })
@@ -121,7 +122,7 @@ impl ServerBuilder {
             .await
             .with_context(|| format!("Failed to bind to {addr}"))?;
 
-        println!("Server running at http://{addr}");
+        info!("Server running at http://{addr}");
 
         match self.shutdown_signal {
             Some(signal) => {

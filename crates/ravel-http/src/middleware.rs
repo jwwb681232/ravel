@@ -35,6 +35,7 @@
 use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use tracing::info;
 
 /// Re-export Axum's `Next` type for middleware function signatures.
 pub type Next = axum::middleware::Next;
@@ -93,7 +94,7 @@ pub async fn log_requests(req: Request, next: Next) -> Response {
     let response = next.run(req).await;
     let status = response.status();
 
-    println!("{method} {path} → {status}");
+    info!("{method} {path} → {status}");
     response
 }
 

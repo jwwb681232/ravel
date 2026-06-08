@@ -28,6 +28,7 @@
 use crate::config::ConfigRepo;
 use crate::container::Container;
 use crate::env::EnvRepo;
+use crate::log::{self, Log};
 use anyhow::Result;
 
 // ── ServiceProvider trait ──────────────────────────────────────────────
@@ -138,14 +139,14 @@ impl Application {
         if self.booted {
             // Late registration — register + boot immediately.
             if let Err(e) = provider.register(&self.container) {
-                eprintln!(
-                    "[ravel] Error registering provider `{}`: {e}",
+                log::error!(
+                    "Error registering provider `{}`: {e}",
                     provider.name()
                 );
             }
             if let Err(e) = provider.boot(&self.container) {
-                eprintln!(
-                    "[ravel] Error booting provider `{}`: {e}",
+                log::error!(
+                    "Error booting provider `{}`: {e}",
                     provider.name()
                 );
             }
@@ -156,13 +157,17 @@ impl Application {
 
     /// Bootstrap the application:
     ///
-    /// 1. Call `register()` on every provider.
-    /// 2. Call `boot()` on every provider.
-    /// 3. Register the application itself in the container.
+    /// 1. Initialise structured logging.
+    /// 2. Call `register()` on every provider.
+    /// 3. Call `boot()` on every provider.
+    /// 4. Register the application itself in the container.
     pub fn boot(mut self) -> Result<Self> {
         if self.booted {
             return Ok(self);
         }
+
+        // Initialise logging (respects RAVEL_LOG env var, defaults to "info")
+        Log::init("info");
 
         // Inject self-owned items into the container so providers can
         // resolve them during register().
@@ -198,6 +203,8 @@ impl Application {
         // Freeze the container so it becomes safe for concurrent reads
         // in the HTTP runtime.
         self.container.freeze();
+
+        log::info!("Application booted successfully");
 
         Ok(self)
     }
