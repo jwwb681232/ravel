@@ -1,0 +1,24 @@
+[package]
+name = "ravel-eloquent"
+version = "0.1.0"
+edition = "2024"
+description = "Eloquent-style ORM for Ravel — #[derive(Model)] with fluent query builder"
+license = "MIT"
+repository = "https://github.com/jwwb681232/ravel"
+categories = ["database"]
+keywords = ["ravel", "eloquent", "orm", "sea-orm"]
+
+[dependencies]
+ravel-eloquent-macros = { path = "../ravel-eloquent-macros" }
+ravel-core = { path = "../ravel-core" }
+sea-orm = "2.0.0-rc.40"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-trait = "0.1"
+anyhow = "1"
+
+[dev-dependencies]
+ravel-test = { path = "../ravel-test" }
+chrono = "0.4"
+serde = { version = "1", features = ["derive"] }

@@ -6,6 +6,8 @@ members = [
     "crates/ravel-core",
     "crates/ravel-db-core",
     "crates/ravel-db-seaorm",
+    "crates/ravel-eloquent",
+    "crates/ravel-eloquent-macros",
     "crates/ravel-http",
     "crates/ravel-generator",
     "crates/ravel-macros",
