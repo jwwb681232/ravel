@@ -2,6 +2,9 @@
 
 [Introduction](README.md)
 
+# Quick Tour
+- [Building a Blog](quick-tour/blog.md)
+
 # Getting Started
 - [Installation](getting-started/installation.md)
 - [Quick Start](getting-started/quick-start.md)
@@ -38,6 +41,7 @@
 
 # Database
 - [Getting Started](database/getting-started.md)
+- [Eloquent ORM](database/eloquent.md)
 - [Query Builder](database/query-builder.md)
 - [Pagination](database/pagination.md)
 - [Migrations](database/migrations.md)
