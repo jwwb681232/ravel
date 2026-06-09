@@ -12,8 +12,36 @@ impl syn::parse::Parse for MetaVec {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let mut metas = Vec::new();
         while !input.is_empty() {
-            let meta = input.parse::<syn::Meta>()?;
-            metas.push(meta);
+            // Try standard Meta first.
+            if let Ok(meta) = input.parse::<syn::Meta>() {
+                metas.push(meta);
+            } else if let Ok(lit) = input.parse::<syn::LitInt>() {
+                // Bare integer literal — `string, 100` comma syntax.
+                // The `string` was already parsed as Meta::Path above, so we
+                // merge the two into a single Meta::List (string(N)).
+                let prev = metas.last().ok_or_else(|| {
+                    syn::Error::new(lit.span(), "unexpected bare integer literal")
+                })?;
+                if let syn::Meta::Path(path) = prev {
+                    if path.is_ident("string") {
+                        metas.pop();
+                        let meta: syn::Meta = syn::parse_quote! { string(#lit) };
+                        metas.push(meta);
+                    } else {
+                        return Err(syn::Error::new(
+                            lit.span(),
+                            "only `string` may be followed by a bare integer",
+                        ));
+                    }
+                } else {
+                    return Err(syn::Error::new(
+                        lit.span(),
+                        "unexpected bare integer literal",
+                    ));
+                }
+            } else {
+                return Err(syn::Error::new(input.span(), "expected meta item"));
+            }
             if input.is_empty() {
                 break;
             }
@@ -270,12 +298,20 @@ fn apply_meta(
                         *column_name = s.value();
                     }
                 }
+            } else if nv.path.is_ident("via") {
+                if let syn::Expr::Lit(expr_lit) = &nv.value {
+                    if let syn::Lit::Str(s) = &expr_lit.lit {
+                        if let Some(RelationKind::HasMany { via, .. }) = relation {
+                            *via = Some(s.value());
+                        }
+                    }
+                }
             } else if nv.path.is_ident("from") {
                 if let syn::Expr::Lit(expr_lit) = &nv.value {
                     if let syn::Lit::Str(s) = &expr_lit.lit {
                         if let Some(RelationKind::BelongsTo { from, .. }) = relation {
                             *from = s.value();
-                        } else {
+                        } else if relation.is_none() {
                             *pending_from = Some(s.value());
                         }
                     }
@@ -285,7 +321,7 @@ fn apply_meta(
                     if let syn::Lit::Str(s) = &expr_lit.lit {
                         if let Some(RelationKind::BelongsTo { to, .. }) = relation {
                             *to = s.value();
-                        } else {
+                        } else if relation.is_none() {
                             *pending_to = Some(s.value());
                         }
                     }
@@ -640,5 +676,43 @@ mod tests {
 
         let not_rel: Type = syn::parse_str("String").unwrap();
         assert!(detect_relation(&not_rel).is_none());
+    }
+
+    #[test]
+    fn test_parse_via() {
+        let input = parse_struct(
+            r#"
+            #[model(table = "users")]
+            struct User {
+                #[model(id)]
+                id: i32,
+                #[model(has_many, via = "role_user")]
+                roles: HasMany<Role>,
+            }
+            "#,
+        );
+        let attrs = parse_model(&input).unwrap();
+        let roles = &attrs.fields[1];
+        match &roles.relation {
+            Some(RelationKind::HasMany { via, .. }) => {
+                assert_eq!(via.as_deref(), Some("role_user"));
+            }
+            other => panic!("Expected HasMany with via, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_string_comma() {
+        let input = parse_struct(
+            r#"
+            #[model(table = "users")]
+            struct User {
+                #[model(string, 100)]
+                name: String,
+            }
+            "#,
+        );
+        let attrs = parse_model(&input).unwrap();
+        assert_eq!(attrs.fields[0].col_type, ColumnType::String(Some(100)));
     }
 }
