@@ -7,7 +7,7 @@
 //! 3.  `{StructName}Public` struct — non-hidden, non-relation fields
 //! 4.  `ModelMeta` trait impl
 //! 5.  Inherent impl block — `to_public()`, `query()`, `r#where()`, CRUD, setters
-//! 6.  Trait impls — `ModelExt`, `Fillable`, `Replicates`, `Serializes`
+//! 6.  `ModelExt` trait impl
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -159,6 +159,20 @@ fn generate_column_attr(f: &FieldAttr) -> TokenStream {
     quote! { #[sea_orm(#(#attrs),*)] }
 }
 
+/// Convert an entity type (e.g. `Post`) to SeaORM's dense attribute path
+/// (e.g. `"super::post::Entity"`).
+fn entity_type_to_seaorm_string(entity_type: &syn::Type) -> String {
+    if let syn::Type::Path(type_path) = entity_type {
+        if let Some(segment) = type_path.path.segments.last() {
+            let ident = segment.ident.to_string();
+            let lower = ident.to_lowercase();
+            return format!("super::{}::Entity", lower);
+        }
+    }
+    // Fallback — should not happen for valid SeaORM models.
+    "super::entity::Entity".to_string()
+}
+
 /// SeaORM relation attribute + field for a relation field.
 fn generate_relation_field(
     f: &FieldAttr,
@@ -171,24 +185,34 @@ fn generate_relation_field(
         .expect("generate_relation_field called for a non-relation field");
 
     match rel {
-        RelationKind::HasMany { via, .. } => {
-            let via_attr = via.as_ref().map(|v| {
-                quote! { , via = #v }
-            });
+        RelationKind::HasMany { entity_type, via } => {
+            let entity_str = entity_type_to_seaorm_string(entity_type);
+            match via {
+                Some(v) => {
+                    quote! {
+                        #[sea_orm(has_many = #entity_str, via = #v)]
+                        pub #field_name: #field_type
+                    }
+                }
+                None => {
+                    quote! {
+                        #[sea_orm(has_many = #entity_str)]
+                        pub #field_name: #field_type
+                    }
+                }
+            }
+        }
+        RelationKind::HasOne { entity_type } => {
+            let entity_str = entity_type_to_seaorm_string(entity_type);
             quote! {
-                #[sea_orm(has_many #via_attr)]
+                #[sea_orm(has_one = #entity_str)]
                 pub #field_name: #field_type
             }
         }
-        RelationKind::HasOne { .. } => {
+        RelationKind::BelongsTo { entity_type, from, to } => {
+            let entity_str = entity_type_to_seaorm_string(entity_type);
             quote! {
-                #[sea_orm(has_one)]
-                pub #field_name: #field_type
-            }
-        }
-        RelationKind::BelongsTo { from, to, .. } => {
-            quote! {
-                #[sea_orm(belongs_to, from = #from, to = #to)]
+                #[sea_orm(belongs_to = #entity_str, from = #from, to = #to)]
                 pub #field_name: #field_type
             }
         }
@@ -428,44 +452,37 @@ fn generate_query_shorthands(_struct_name: &syn::Ident) -> TokenStream {
 fn generate_static_crud(_struct_name: &syn::Ident) -> TokenStream {
     quote! {
         pub async fn find(
-            db: &impl sea_orm::ConnectionTrait,
+            db: &sea_orm::DatabaseConnection,
             id: impl Into<sea_orm::Value> + std::marker::Send,
         ) -> ravel_eloquent::Result<Option<Self>> {
             <Self as ravel_eloquent::ModelExt>::find(db, id).await
         }
 
         pub async fn find_or_fail(
-            db: &impl sea_orm::ConnectionTrait,
+            db: &sea_orm::DatabaseConnection,
             id: impl Into<sea_orm::Value> + std::marker::Send,
         ) -> ravel_eloquent::Result<Self> {
             <Self as ravel_eloquent::ModelExt>::find_or_fail(db, id).await
         }
 
         pub async fn all(
-            db: &impl sea_orm::ConnectionTrait,
+            db: &sea_orm::DatabaseConnection,
         ) -> ravel_eloquent::Result<Vec<Self>> {
             <Self as ravel_eloquent::ModelExt>::all(db).await
         }
 
         pub async fn create(
             data: serde_json::Value,
-            db: &impl sea_orm::ConnectionTrait,
+            db: &sea_orm::DatabaseConnection,
         ) -> ravel_eloquent::Result<Self> {
             <Self as ravel_eloquent::ModelExt>::create(data, db).await
         }
 
-        pub async fn destroy(
-            db: &impl sea_orm::ConnectionTrait,
+        pub async fn delete_by_id(
+            db: &sea_orm::DatabaseConnection,
             id: impl Into<sea_orm::Value> + std::marker::Send,
-        ) -> ravel_eloquent::Result<u64> {
-            <Self as ravel_eloquent::ModelExt>::destroy(db, id).await
-        }
-
-        pub async fn destroy_many(
-            db: &impl sea_orm::ConnectionTrait,
-            ids: &[impl Into<sea_orm::Value> + Clone + std::marker::Send],
-        ) -> ravel_eloquent::Result<u64> {
-            <Self as ravel_eloquent::ModelExt>::destroy_many(db, ids).await
+        ) -> ravel_eloquent::Result<()> {
+            <Self as ravel_eloquent::ModelExt>::delete_by_id(db, id).await
         }
     }
 }
@@ -494,57 +511,9 @@ fn generate_setters(model: &ModelAttrs) -> TokenStream {
 
 // ── 6. Trait implementations ───────────────────────────────────────────────
 
-fn generate_trait_impls(model: &ModelAttrs, struct_name: &syn::Ident) -> TokenStream {
-    let fillable = generate_fillable_impl(model, struct_name);
-    let replicates = generate_replicates_impl(struct_name);
-    let serializes = generate_serializes_impl(struct_name);
-
+fn generate_trait_impls(_model: &ModelAttrs, struct_name: &syn::Ident) -> TokenStream {
     quote! {
-        #[async_trait::async_trait]
         impl ravel_eloquent::ModelExt for #struct_name {}
-
-        #fillable
-
-        #replicates
-
-        #serializes
     }
 }
 
-fn generate_fillable_impl(model: &ModelAttrs, struct_name: &syn::Ident) -> TokenStream {
-    let field_names: Vec<String> = model
-        .fields
-        .iter()
-        .filter(|f| !f.is_hidden && f.relation.is_none())
-        .map(|f| f.field_name.clone())
-        .collect();
-
-    quote! {
-        impl ravel_eloquent::Fillable for #struct_name {
-            fn fill(mut self, data: serde_json::Value) -> Self {
-                if let serde_json::Value::Object(map) = &data {
-                    #(
-                        if let Some(val) = map.get(#field_names) {
-                            if let Ok(v) = serde_json::from_value(val.clone()) {
-                                self.#field_names = v;
-                            }
-                        }
-                    )*
-                }
-                self
-            }
-        }
-    }
-}
-
-fn generate_replicates_impl(struct_name: &syn::Ident) -> TokenStream {
-    quote! {
-        impl ravel_eloquent::Replicates for #struct_name {}
-    }
-}
-
-fn generate_serializes_impl(struct_name: &syn::Ident) -> TokenStream {
-    quote! {
-        impl ravel_eloquent::Serializes for #struct_name {}
-    }
-}
