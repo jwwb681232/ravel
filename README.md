@@ -213,14 +213,16 @@ let names: Vec<&str> = collect!(users)
     .to_vec();
 ```
 
-### Database (ravel-db-core + ravel-db-seaorm)
+### Database & Eloquent ORM (ravel-db-core + ravel-db-seaorm + ravel-eloquent)
 
 - **Multi-connection** — Named connections from `config/database.toml`
-- **Lazy connection** — Thread-safe, pools connections on first use
 - **Migration runner** — CLI-driven with SeaORM migrations
-- **Pagination** — `Page<T>` with `has_more()`, `last_page()`, `count()`
 - **Schema Builder** — Programmatic table creation API
-- **Decoupled** — `ravel-db-core` defines traits; `ravel-db-seaorm` is the SeaORM implementation
+- **Eloquent ORM** — Active Record pattern with `#[derive(Model)]`
+- **Fluent QueryBuilder** — Type-safe chainable queries on SeaORM `Select<E>`
+- **Relationships** — HasMany, BelongsTo, HasOne with lazy-loading `RelationQuery<R>`
+- **Pagination** — `Page<T>` with `has_more()`, `last_page()`, `count()`
+- **Serialization** — `to_public()` / `to_public_json()` with hidden-field protection
 
 ```toml
 # config/database.toml
@@ -231,15 +233,47 @@ port = 5432
 database = "myapp"
 username = "user"
 password = "secret"
-max_connections = 20
-min_connections = 5
 ```
 
 ```rust
-use ravel_db_seaorm::connection::ConnectionManager;
+use ravel_eloquent::{Model, ModelExt, ActiveModelExt};
 
-let manager = ConnectionManager::from_config("config")?;
-let db = manager.connect("default").await?;
+#[derive(Model, Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[model(table = "users", timestamps)]
+struct User {
+    #[model(id)]                                   pub id: i32,
+    #[model(string, 254, unique)]                  pub email: String,
+    #[model(hidden)]                               pub password: String,
+    #[model(has_many)]                             pub posts: HasMany<Post>,
+    #[model(belongs_to, from = "team_id", to = "id")] pub team: HasOne<Team>,
+}
+
+// Static CRUD
+let user = User::find_or_fail(&db, 1).await?;
+let all = User::all(&db).await?;
+User::delete_by_id(&db, 42).await?;
+
+// Instance methods (consumptive, chainable)
+let user = User { id: 0, name: "Alice".into(), email: "a@e.com".into() };
+let user = user.save(&db).await?;          // INSERT
+let user = user.set_name("Bob").save(&db).await?;  // UPDATE
+user.delete(&db).await?;                   // DELETE
+
+// Query builder
+let users = User::query()
+    .filter(UserColumn::Active, true)
+    .order_by_desc(UserColumn::CreatedAt)
+    .limit(10).get(&db).await?;
+
+// Lazy-loading relations
+let posts = user.posts()
+    .filter(PostColumn::Published, true)
+    .latest("created_at")
+    .limit(5).get(&db).await?;
+let team = user.team().first(&db).await?;
+
+// Safe serialization (excludes #[model(hidden)] fields)
+let json = user.to_public_json();  // password NOT included
 ```
 
 ### Job Queue (ravel-support)
@@ -315,6 +349,8 @@ ravel/
 │   ├── ravel-http/            Route builder, server, middleware, session, auth, csrf
 │   ├── ravel-db-core/         Database abstraction traits, schema builder
 │   ├── ravel-db-seaorm/       SeaORM implementation: connection, migration, pagination
+│   ├── ravel-eloquent/        Eloquent ORM: Active Record, QueryBuilder, relations
+│   ├── ravel-eloquent-macros/ #[derive(Model)] proc-macro
 │   ├── ravel-generator/       Code scaffolding (Tera templates)
 │   ├── ravel-support/         Queue, scheduler, storage
 │   ├── ravel-macros/          Proc-macros (#[derive(Job)])

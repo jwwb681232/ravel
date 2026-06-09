@@ -2,16 +2,16 @@
 
 ## Introduction
 
-**ravel-eloquent** is the Active Record ORM for Ravel, modelled after Laravel Eloquent. It wraps SeaORM with a familiar, expressive API so you can define models, build queries, express relationships, and paginate results — all without writing raw SQL or deep SeaORM boilerplate.
+**ravel-eloquent** is the Active Record ORM for Ravel, modelled after Laravel Eloquent. It builds on SeaORM 2.0 with a familiar, expressive API so you can define models, write fluent queries, express relationships, and paginate results — all backed by SeaORM's type-safe engine.
 
 The system is split across two crates:
 
 | Crate | Purpose |
 |-------|---------|
-| `ravel-eloquent` | Runtime traits and types (`ModelQuery`, `Page`, `HasRelations`, re-export of SeaORM) |
-| `ravel-eloquent-macros` | The `#[derive(Model)]` proc-macro that generates column enums, public views, and query entry points |
+| `ravel-eloquent` | Runtime traits (`ModelMeta`, `ModelExt`, `ActiveModelExt`, `QueryBuilder`, `RelationQuery`, `Page`) |
+| `ravel-eloquent-macros` | The `#[derive(Model)]` proc-macro that generates SeaORM entities, column enums, public views, and trait implementations |
 
-Add both to your `Cargo.toml`:
+Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -25,33 +25,37 @@ The macros crate is pulled in automatically — you only need `ravel-eloquent` o
 
 ## Defining a Model
 
-Use `#[derive(Model)]` on a struct. The `#[model(table = "...")]` container attribute sets the database table name. Every field is annotated with `#[model(...)]` to declare its column type and constraints.
+Use `#[derive(Model)]` on a struct. The `#[model(table = "...")]` container attribute sets the database table name. Each column field is annotated with `#[model(...)]` to declare its type and constraints. Relationship fields use `HasMany<T>` / `HasOne<T>` types.
 
 ```rust
 use ravel_eloquent::Model;
 
-#[derive(Model, serde::Serialize, serde::Deserialize)]
-#[model(table = "users")]
+#[derive(Model, Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[model(table = "users", timestamps)]
 struct User {
-    #[model(id)] id: i32,
-    #[model(string, 255)] name: String,
-    #[model(string, 255, unique)] email: String,
-    #[model(hidden)] password: String,
-}
-```
+    #[model(id)]
+    pub id: i32,
 
-Multiple `#[model(...)]` attributes can be stacked on a single field:
+    pub name: String,                         // plain String → VARCHAR(255)
 
-```rust
-#[derive(Model)]
-#[model(table = "posts")]
-struct Post {
-    #[model(id)] id: i32,
-    #[model(string, 255)] title: String,
-    #[model(text)] body: String,
+    #[model(string, 254, unique)]
+    pub email: String,
+
     #[model(hidden)]
-    #[model(string, 255)]
-    draft_token: String,
+    pub password: String,                     // excluded from public view
+
+    #[model(nullable, string, 500)]
+    pub bio: Option<String>,
+
+    #[model(integer)]
+    pub team_id: i32,
+
+    // Relations
+    #[model(has_many)]
+    pub posts: sea_orm::entity::prelude::HasMany<Post>,
+
+    #[model(belongs_to, from = "team_id", to = "id")]
+    pub team: sea_orm::entity::prelude::HasOne<Team>,
 }
 ```
 
@@ -60,224 +64,344 @@ struct Post {
 | Attribute | Description |
 |-----------|-------------|
 | `id` | Primary key, auto-increment |
-| `string, N` | `VARCHAR(N)` — defaults to 255 if N is omitted |
+| `uuid` | Primary key, no auto-increment (UUID) |
+| `string`, `string, N` | `VARCHAR(N)` — defaults to 255 if N is omitted |
 | `text` | Unlimited-length text |
 | `integer` | 32-bit signed integer |
 | `bigint` | 64-bit signed integer |
 | `boolean` | Boolean (true / false) |
-| `float` | Floating-point number |
+| `float` | Floating-point number (f64) |
 | `datetime` | Date-time timestamp |
 | `json` | Structured JSON data |
-| `uuid` | Universally unique identifier |
-| `hidden` | Excluded from the generated public view (see below) |
+| `hidden` | Excluded from `to_public()` output |
 | `unique` | Adds a `UNIQUE` constraint |
-| `nullable` | Allows `NULL` values |
-| `timestamps` | Marks a field as `created_at` / `updated_at` |
+| `nullable` | Allows `NULL` values (auto-detected for `Option<T>`) |
+| `column = "real_name"` | Override the database column name |
+
+### Container Attributes
+
+| Attribute | Description |
+|-----------|-------------|
+| `table = "name"` | Database table name (**required**) |
+| `timestamps` | Auto-add `created_at` / `updated_at` fields |
+
+### Relationship Attributes
+
+| Attribute | Example |
+|-----------|---------|
+| `has_many` | `#[model(has_many)] pub posts: HasMany<Post>` |
+| `has_one` | `#[model(has_one)] pub profile: HasOne<Profile>` |
+| `belongs_to, from = "fk", to = "pk"` | `#[model(belongs_to, from = "team_id", to = "id")] pub team: HasOne<Team>` |
+| `has_many, via = "junction"` | `#[model(has_many, via = "role_user")] pub roles: HasMany<Role>` (many-to-many) |
 
 ---
 
 ## Generated Code
 
-For a model named `User`, the `#[derive(Model)]` macro generates:
+For a model named `User`, `#[derive(Model)]` generates:
 
 ### `UserColumn` enum
 
-Each field becomes a variant with a `as_str()` method that returns the column name:
+Each database column becomes a PascalCase variant with an `as_str()` method:
 
 ```rust
-let col = UserColumn::email;
+let col = UserColumn::Email;
 assert_eq!(col.as_str(), "email");
 ```
 
 ### `UserPublic` struct
 
-A serializable struct that mirrors `User` but **omits** any fields marked `#[model(hidden)]`. This is useful for API responses where sensitive data (passwords, tokens) must never leak.
+A `#[derive(Debug, Clone, serde::Serialize)]` struct with all **non-hidden**, **non-relation** fields. This is the safe type for API responses.
 
-### `to_public()` method
+### Trait Implementations
 
-Converts the model into its public-safe counterpart:
+| Trait | Provides |
+|-------|----------|
+| `ModelMeta` | `table_name()`, `columns()`, `id_column()`, `public_columns()` |
+| `ModelExt` | `find()`, `find_or_fail()`, `all()`, `create()`, `delete_by_id()` |
+| `ActiveModelExt` | `save()`, `insert()`, `update()`, `delete()`, `refresh()` |
+| `Fillable` | `fill()`, `set_<field>()` per-field setters |
+| `Serializes` | `to_public()`, `to_json()`, `to_public_json()` |
+| `Replicates` | `replicate()` |
+| `HasTimestamps` | `touch()` |
 
-```rust
-let user = User { id: 1, name: "Alice".into(), email: "alice@example.com".into(), password: "secret".into() };
-let public: UserPublic = user.to_public();
-// public.password does not exist — compile-time guarantee
-```
+---
 
-### `query()` static method
-
-Returns a `ModelQuery<Self>` with the table name pre-configured:
-
-```rust
-let q: ModelQuery<User> = User::query();
-assert!(q.to_select_sql().contains("SELECT * FROM \"users\""));
-```
-
-### `r#where(col, val)` static method
-
-Shorthand for `User::query().r#where(col, val)`:
+## Static CRUD
 
 ```rust
-let q = User::r#where("email", "alice@example.com");
+use ravel_eloquent::{Model, ModelExt};
+
+#[derive(Model, Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[model(table = "users")]
+struct User {
+    #[model(id)] pub id: i32,
+    pub name: String,
+    pub email: String,
+}
+
+// Find by primary key
+let user = User::find(&db, 1).await?;         // Option<User>
+let user = User::find_or_fail(&db, 1).await?;  // User (errors if missing)
+
+// Fetch all
+let users = User::all(&db).await?;             // Vec<User>
+
+// Create from JSON
+let user = User::create(
+    serde_json::json!({"name": "Alice", "email": "alice@example.com"}),
+    &db,
+).await?;
+
+// Delete by ID (no need to load the instance)
+User::delete_by_id(&db, 42).await?;
 ```
 
 ---
 
-## ModelQuery Builder
+## Instance Methods (Active Record)
 
-`ModelQuery<T>` is the fluent query builder. Every method returns `Self` for chaining.
+All instance methods are **consumptive** (take `self`), returning a fresh instance. Use Rust variable shadowing for a fluent experience:
 
-| Method | Description |
-|--------|-------------|
-| `.r#where("col", value)` | Add a `WHERE` equality clause |
-| `.order_by("col", "ASC" \| "DESC")` | Add an `ORDER BY` clause |
-| `.limit(n)` | Limit the result set to `n` rows |
-| `.offset(n)` | Skip `n` rows before returning results |
-| `.to_select_sql()` | Render the query as a `SELECT *` SQL string |
-| `.to_count_sql()` | Render the query as a `SELECT COUNT(*)` SQL string |
-| `.to_delete_sql()` | Render the query as a `DELETE` SQL string |
+```rust
+// ── Create ──
+let user = User { id: 0, name: "Alice".into(), email: "a@e.com".into() };
+let user = user.save(&db).await?;       // INSERT → id auto-filled
 
-### Chaining example
+// ── Update ──
+let user = user
+    .set_name("Alice Updated")
+    .set_email("alice@new.com")
+    .save(&db).await?;                   // UPDATE
+
+// ── Force INSERT / UPDATE ──
+let user = user.insert(&db).await?;     // INSERT regardless of id
+let user = user.update(&db).await?;     // UPDATE (errors if id == 0)
+
+// ── Delete ──
+user.delete(&db).await?;
+
+// ── Refresh ──
+let user = user.refresh(&db).await?;    // re-fetch from DB
+
+// ── Touch (update updated_at only) ──
+let user = user.touch(&db).await?;
+
+// ── Replicate (clone + id = 0) ──
+let dup = user.replicate();
+let dup = dup.save(&db).await?;         // new row
+
+// ── Bulk fill ──
+let user = user.fill(serde_json::json!({
+    "name": "Bob",
+    "email": "bob@example.com"
+}));
+```
+
+### Instance Method Reference
+
+| Method | Signature | Behaviour |
+|--------|-----------|-----------|
+| `save()` | `save(self, db) -> Result<Self>` | INSERT if id==0, else UPDATE. Returns back-filled instance |
+| `insert()` | `insert(self, db) -> Result<Self>` | Force INSERT, ignore current id |
+| `update()` | `update(self, db) -> Result<Self>` | Force UPDATE, error if id==0 |
+| `delete()` | `delete(self, db) -> Result<()>` | DELETE the row, consumes self |
+| `refresh()` | `refresh(self, db) -> Result<Self>` | Re-fetch current row from database |
+| `replicate()` | `replicate(&self) -> Self` | Clone with id reset to 0 |
+| `touch()` | `touch(self, db) -> Result<Self>` | Only update `updated_at` |
+| `fill()` | `fill(self, data: Value) -> Self` | Bulk-assign fields from JSON |
+| `set_<field>()` | `set_name(self, val) -> Self` | Set a single field (chainable) |
+
+---
+
+## Serialization
+
+```rust
+// Full serialization (includes hidden fields)
+let json = user.to_json();
+// {"id":1,"name":"Alice","password":"secret",...}
+
+// Safe serialization (excludes #[model(hidden)] fields)
+let json = user.to_public_json();
+// {"id":1,"name":"Alice",...}
+
+// Get the Public struct directly
+let public = user.to_public();
+// UserPublic { id: 1, name: "Alice", ... }
+```
+
+---
+
+## QueryBuilder
+
+`QueryBuilder<E>` wraps SeaORM 2.0's type-safe `Select<E>`. All methods are chainable.
+
+### Query Entry
 
 ```rust
 use ravel_eloquent::Model;
 
-#[derive(Model)]
-#[model(table = "users")]
-struct User {
-    #[model(id)] id: i32,
-    #[model(string, 255)] name: String,
-    #[model(boolean)] active: bool,
+let qb = User::query();                        // SELECT * FROM "users"
+let qb = User::query().r#where("active", true); // with WHERE
+```
+
+### WHERE Clauses
+
+```rust
+use ravel_eloquent::UserColumn;
+
+User::query()
+    .filter(UserColumn::Name, "Alice")          // = 'Alice'
+    .filter_gt(UserColumn::Age, 18)             // > 18
+    .filter_gte(UserColumn::Age, 18)            // >= 18
+    .filter_lt(UserColumn::Age, 65)             // < 65
+    .filter_ne(UserColumn::Status, "deleted")   // != 'deleted'
+    .filter_like(UserColumn::Name, "%Ali%")     // LIKE
+    .filter_in(UserColumn::Id, &[1, 2, 3])      // IN (1,2,3)
+    .filter_null(UserColumn::DeletedAt)         // IS NULL
+    .filter_not_null(UserColumn::Email)         // IS NOT NULL
+    .filter_between(UserColumn::Age, 18, 65)    // BETWEEN 18 AND 65
+    .get(&db).await?;
+```
+
+For string-based column names (dynamic queries, macro-generated code):
+
+```rust
+User::query()
+    .r#where("name", "Alice")
+    .r#where("age", 18)
+    .get(&db).await?;
+```
+
+### ORDER BY, LIMIT, OFFSET
+
+```rust
+User::query()
+    .order_by_asc(UserColumn::Name)
+    .order_by_desc(UserColumn::CreatedAt)
+    .limit(15)
+    .offset(30)
+    .get(&db).await?;
+```
+
+### Aggregates
+
+```rust
+User::query().count(&db).await?;     // → u64
+User::query().exists(&db).await?;    // → bool
+```
+
+### Pagination
+
+```rust
+use ravel_eloquent::Page;
+
+let page: Page<User> = User::query()
+    .order_by_asc(UserColumn::Id)
+    .paginate(&db, 1, 15).await?;
+
+assert!(page.has_more());
+println!("Page {} of {}", page.page, page.last_page());
+for user in page.items {
+    // ...
 }
-
-let sql = User::r#where("active", true)
-    .order_by("name", "ASC")
-    .limit(25)
-    .offset(0)
-    .to_select_sql();
-
-assert_eq!(
-    sql,
-    r#"SELECT * FROM "users" WHERE "active" = TRUE ORDER BY "name" ASC LIMIT 25 OFFSET 0"#
-);
 ```
 
-### Count query
+### JOIN
 
 ```rust
-let sql = User::r#where("active", true).to_count_sql();
-// SELECT COUNT(*) as count FROM "users" WHERE "active" = TRUE
+use ravel_eloquent::QueryBuilder;
+use sea_orm::JoinType;
+
+// join related entities defined in the SeaORM relation model
+User::query()
+    .inner_join::<Post>(JoinType::InnerJoin)
+    .get(&db).await?;
 ```
 
-### Delete query
+### Underlying SeaORM Access
+
+Use `.into_select()` to get the raw SeaORM `Select<E>` for advanced queries:
 
 ```rust
-let sql = User::r#where("id", 42).to_delete_sql();
-// DELETE FROM "users" WHERE "id" = 42
-```
+use sea_orm::*;
 
-Values are quoted safely — strings are escaped, booleans become `TRUE` / `FALSE`, and integers are rendered as-is.
+let select: Select<User> = User::query().into_select();
+// Use any SeaORM API directly
+```
 
 ---
 
 ## Relationships
 
-The `HasRelations` trait provides Eloquent-style relationship builders. It is automatically implemented for any type that implements `DeserializeOwned`.
+### Lazy Loading — `RelationQuery<R>`
 
-### `has_many` — One-to-Many
-
-```rust
-use ravel_eloquent::{HasRelations, RelatedModel};
-use sea_orm::Value;
-
-let user = User {
-    id: 1,
-    name: "Alice".into(),
-    email: "alice@example.com".into(),
-};
-
-let posts: RelationBuilder<Post> =
-    user.has_many::<Post>("posts", "user_id", Value::Int(Some(user.id)));
-
-let sql = posts.to_sql();
-// SELECT * FROM "posts" WHERE "user_id" = 1
-```
-
-### `belongs_to` — Belongs-To
+Macro-generated relation methods return a `RelationQuery<R>` that supports filtering, ordering, and pagination:
 
 ```rust
-let post = Post { id: 10, user_id: 1, title: "Hello".into() };
+let user = User::find(&db, 1).await?;
 
-let owner: RelationBuilder<User> =
-    post.belongs_to::<User>("users", "id", Value::Int(Some(post.user_id)));
+// user.posts() returns RelationQuery<Post>
+let posts = user.posts()
+    .filter(PostColumn::Published, true)
+    .order_by_desc(PostColumn::CreatedAt)
+    .limit(10)
+    .get(&db).await?;
 
-let sql = owner.to_sql();
-// SELECT * FROM "users" WHERE "id" = 10
+// user.team() returns RelationQuery<Team>
+let team = user.team()
+    .first(&db).await?;
+
+// Aggregates on relations
+let draft_count = user.posts()
+    .filter(PostColumn::Published, false)
+    .count(&db).await?;
+
+let has_posts = user.posts().exists(&db).await?;
 ```
 
-### `RelationBuilder<R>`
+### RelationQuery Methods
 
-Both `has_many` and `belongs_to` return a `RelationBuilder<R>`, which exposes one method:
-
-```rust
-impl<R: RelatedModel> RelationBuilder<R> {
-    pub fn to_sql(&self) -> String;
-}
-```
-
-`RelatedModel` is a blanket trait implemented for any type that is `DeserializeOwned + Send + Sync + 'static` — you rarely need to implement it manually.
+| Method | Description |
+|--------|-------------|
+| `.filter(col, val)` | WHERE equality |
+| `.filter_gt(col, val)` | WHERE greater-than |
+| `.filter_in(col, vals)` | WHERE IN |
+| `.filter_null(col)` | WHERE IS NULL |
+| `.filter_not_null(col)` | WHERE IS NOT NULL |
+| `.order_by_asc(col)` / `.order_by_desc(col)` | ORDER BY |
+| `.limit(n)` / `.offset(n)` | Pagination |
+| `.get(db)` | Fetch all matching |
+| `.first(db)` | Fetch first match |
+| `.count(db)` / `.exists(db)` | Aggregates |
+| `.paginate(db, page, per_page)` | Paginated query |
 
 ---
 
-## Pagination
+## Traits at a Glance
 
-The `Page<T>` struct wraps a paginated result set:
+All traits are auto-implemented by `#[derive(Model)]`. Use them as trait bounds when writing generic functions:
 
 ```rust
-use ravel_eloquent::Page;
-
-let page = Page::<User> {
-    items: vec![user],
-    total: 42,
-    page: 1,
-    per_page: 15,
+use ravel_eloquent::{
+    ModelMeta, ModelExt, ActiveModelExt, Fillable, Serializes, Replicates,
 };
 
-assert_eq!(page.last_page(), 3);  // ceil(42 / 15)
-assert!(page.has_more());         // page 1 < 3
-```
-
-| Field / Method | Type | Description |
-|----------------|------|-------------|
-| `items` | `Vec<T>` | The records for the current page |
-| `total` | `u64` | Total number of matching records across all pages |
-| `page` | `u64` | Current page number (1-based) |
-| `per_page` | `u64` | Number of records per page |
-| `last_page()` | `u64` | Total number of pages (`total.div_ceil(per_page)`) |
-| `has_more()` | `bool` | Whether there are more pages after the current one |
-
----
-
-## Public / Hidden
-
-The `#[model(hidden)]` attribute excludes a field from the generated `*Public` struct and its `to_public()` method. This is essential for sensitive fields that should never appear in API responses.
-
-```rust
-use ravel_eloquent::Model;
-
-#[derive(Model, serde::Serialize, serde::Deserialize)]
-#[model(table = "users")]
-struct User {
-    #[model(id)] pub id: i32,
-    #[model(string, 255)] pub name: String,
-    #[model(hidden)] pub password: String,  // excluded from UserPublic
+async fn find_and_serialize<T>(db: &DatabaseConnection, id: i32) -> Result<Value>
+where
+    T: ModelExt + Serializes,
+{
+    let model = T::find_or_fail(db, id).await?;
+    Ok(model.to_public_json())
 }
-
-let user = User { id: 1, name: "Alice".into(), password: "hunter2".into() };
-let public = user.to_public();
-
-// UserPublic is generated as:
-//   struct UserPublic { pub id: i32, pub name: String }
-// No password field exists — it cannot be serialised accidentally.
 ```
 
-`UserPublic` derives `serde::Serialize` automatically, so it can be returned directly from HTTP handlers without risking exposure of hidden data.
+| Trait | Key methods | Kind |
+|-------|-------------|------|
+| `ModelMeta` | `table_name()`, `columns()`, `id_column()`, `public_columns()` | Metadata |
+| `ModelExt` | `find()`, `find_or_fail()`, `all()`, `create()`, `delete_by_id()` | Static CRUD |
+| `ActiveModelExt` | `save()`, `insert()`, `update()`, `delete()`, `refresh()` | Instance writes |
+| `Fillable` | `fill()`, `set_<field>()` | Mass assignment |
+| `Serializes` | `to_public()`, `to_json()`, `to_public_json()` | JSON |
+| `Replicates` | `replicate()` | Clone + reset id |
+| `HasTimestamps` | `touch()` | Update timestamps |
