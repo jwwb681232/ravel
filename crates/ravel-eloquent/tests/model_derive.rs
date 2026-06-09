@@ -1,6 +1,6 @@
 //! Integration test for #[derive(Model)] proc-macro.
 
-use ravel_eloquent::{HasRelations, Model, RelatedModel};
+use ravel_eloquent::{HasRelations, Model, RelatedModel, RelationBuilder};
 use sea_orm::Value;
 
 #[derive(Model, Debug, serde::Serialize, serde::Deserialize)]
@@ -96,7 +96,8 @@ fn test_model_has_many_relations() {
         password: "secret".into(),
     };
 
-    let posts_query = user.has_many::<serde_json::Value>("posts", "user_id", Value::Int(Some(1)));
+    let posts_query: RelationBuilder<serde_json::Value> =
+        user.has_many::<serde_json::Value>("posts", "user_id", Value::Int(Some(1)));
     let sql = posts_query.to_sql();
     assert!(sql.contains("posts"));
     assert!(sql.contains("user_id"));

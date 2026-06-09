@@ -1,7 +1,9 @@
 //! Parse `#[model(...)]` attributes from struct fields and container.
+//!
+//! Uses `syn::Meta` for robust parsing (no string matching).
 #![allow(dead_code)]
 
-use syn::{Attribute, Fields, Meta, Type};
+use syn::{Attribute, Fields, Type};
 
 /// Parsed representation of a #[derive(Model)] struct.
 pub struct ModelAttrs {
@@ -33,25 +35,22 @@ pub enum ColumnType {
     Uuid,
 }
 
-/// Parse the `#[model(table = "...")]` container attribute.
+/// Parse the `#[model(table = "name")]` container attribute.
 pub fn parse_container_attrs(attrs: &[Attribute]) -> Result<String, syn::Error> {
     for attr in attrs {
         if !attr.path().is_ident("model") {
             continue;
         }
-        if let Meta::List(list) = &attr.meta {
-            let tokens = list.tokens.to_string();
-            if let Some(start) = tokens.find("table")
-                && let Some(eq) = tokens[start..].find('=')
-            {
-                let rest = &tokens[start + eq + 1..].trim();
-                if let Some(q) = rest.find('"') {
-                    let inner = &rest[q + 1..];
-                    if let Some(end) = inner.find('"') {
-                        return Ok(inner[..end].to_string());
-                    }
-                }
+        let mut table: Option<String> = None;
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("table") {
+                let s: syn::LitStr = meta.value()?.parse()?;
+                table = Some(s.value());
             }
+            Ok(())
+        })?;
+        if let Some(t) = table {
+            return Ok(t);
         }
     }
     Err(syn::Error::new(
@@ -72,62 +71,41 @@ pub fn parse_field_attrs(attrs: &[Attribute]) -> ColumnAttr {
         if !attr.path().is_ident("model") {
             continue;
         }
-        let tokens = attr
-            .meta
-            .require_list()
-            .map(|l| l.tokens.to_string())
-            .unwrap_or_default();
-
-        if tokens.contains("id") {
-            is_id = true;
-            col_type = ColumnType::Id;
-        }
-        if tokens.contains("hidden") {
-            is_hidden = true;
-        }
-        if tokens.contains("unique") {
-            is_unique = true;
-        }
-        if tokens.contains("nullable") {
-            is_nullable = true;
-        }
-        if tokens.contains("timestamps") {
-            col_type = ColumnType::DateTime;
-        }
-        // Parse "string" or "string, 255"
-        if tokens.contains("string") {
-            let len = if let Some(comma) = tokens.find("string") {
-                let rest = &tokens[comma + 6..].trim();
-                rest.trim_start_matches(',').trim().parse().unwrap_or(255)
-            } else {
-                255
-            };
-            col_type = ColumnType::String(len);
-        }
-        if tokens.contains("text") {
-            col_type = ColumnType::Text;
-        }
-        if tokens.contains("integer") {
-            col_type = ColumnType::Integer;
-        }
-        if tokens.contains("bigint") {
-            col_type = ColumnType::BigInt;
-        }
-        if tokens.contains("boolean") {
-            col_type = ColumnType::Boolean;
-        }
-        if tokens.contains("float") {
-            col_type = ColumnType::Float;
-        }
-        if tokens.contains("datetime") {
-            col_type = ColumnType::DateTime;
-        }
-        if tokens.contains("json") {
-            col_type = ColumnType::Json;
-        }
-        if tokens.contains("uuid") {
-            col_type = ColumnType::Uuid;
-        }
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("id") {
+                is_id = true;
+                col_type = ColumnType::Id;
+            } else if meta.path.is_ident("hidden") {
+                is_hidden = true;
+            } else if meta.path.is_ident("unique") {
+                is_unique = true;
+            } else if meta.path.is_ident("nullable") {
+                is_nullable = true;
+            } else if meta.path.is_ident("timestamps") {
+                col_type = ColumnType::DateTime;
+            } else if meta.path.is_ident("string") {
+                // Optional length: #[model(string, 255)]
+                let len: Option<syn::LitInt> = meta.value().ok().and_then(|v| v.parse().ok());
+                col_type = ColumnType::String(len.map_or(255, |l| l.base10_parse().unwrap_or(255)));
+            } else if meta.path.is_ident("text") {
+                col_type = ColumnType::Text;
+            } else if meta.path.is_ident("integer") {
+                col_type = ColumnType::Integer;
+            } else if meta.path.is_ident("bigint") {
+                col_type = ColumnType::BigInt;
+            } else if meta.path.is_ident("boolean") {
+                col_type = ColumnType::Boolean;
+            } else if meta.path.is_ident("float") {
+                col_type = ColumnType::Float;
+            } else if meta.path.is_ident("datetime") {
+                col_type = ColumnType::DateTime;
+            } else if meta.path.is_ident("json") {
+                col_type = ColumnType::Json;
+            } else if meta.path.is_ident("uuid") {
+                col_type = ColumnType::Uuid;
+            }
+            Ok(())
+        });
     }
 
     ColumnAttr {
@@ -165,6 +143,11 @@ pub fn parse_model(input: &syn::DeriveInput) -> Result<ModelAttrs, syn::Error> {
             col.field_type = field.ty.clone();
             columns.push(col);
         }
+    } else {
+        return Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "#[derive(Model)] only supports structs with named fields",
+        ));
     }
 
     Ok(ModelAttrs {

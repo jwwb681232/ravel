@@ -12,14 +12,14 @@
 //!     #[model(string, 255)] name: String,
 //!     #[model(string, 255, unique)] email: String,
 //!     #[model(hidden)] password: String,
-//!     #[model(timestamps)] created_at: chrono::NaiveDateTime,
+//!     #[model(datetime)] created_at: chrono::NaiveDateTime,
 //! }
 //! ```
 
 mod query;
 mod relations;
 
-pub use query::{ModelExt, ModelQuery, Page};
+pub use query::{ModelExt, ModelMeta, ModelQuery, Page};
 pub use ravel_eloquent_macros::Model;
 pub use relations::{HasRelations, RelatedModel, RelationBuilder};
 pub use sea_orm;

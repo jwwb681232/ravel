@@ -13,8 +13,6 @@ pub fn generate(input: &syn::DeriveInput) -> Result<TokenStream, syn::Error> {
     let attrs = crate::attrs::parse_model(input)?;
     let struct_name = &input.ident;
 
-    let table_name = &attrs.table_name;
-
     // Generate Column enum
     let column_variants: Vec<_> = attrs
         .columns
@@ -57,16 +55,19 @@ pub fn generate(input: &syn::DeriveInput) -> Result<TokenStream, syn::Error> {
         .map(|c| format_ident!("{}", c.field_name))
         .collect();
 
-    // Hidden fields for Serialize skip
-    let _hidden_skip: Vec<_> = attrs
+    // Find the ID column for find() methods
+    let id_field_name = attrs
         .columns
         .iter()
-        .filter(|c| c.is_hidden)
-        .map(|c| {
-            let name = format_ident!("{}", c.field_name);
-            quote! { #[serde(skip)] #name }
-        })
-        .collect();
+        .find(|c| c.is_id)
+        .map(|c| c.field_name.clone())
+        .unwrap_or_else(|| "id".to_string());
+
+    // Column name literals for ModelMeta
+    let column_name_literals: Vec<_> = attrs.columns.iter().map(|c| &c.field_name).collect();
+
+    let table_name_lit = &attrs.table_name;
+    let id_name_lit = &id_field_name;
 
     let expanded = quote! {
         // ── Column enum ────────────────────────────────────────────
@@ -89,6 +90,19 @@ pub fn generate(input: &syn::DeriveInput) -> Result<TokenStream, syn::Error> {
             #(#public_fields),*
         }
 
+        // ── ModelMeta ──────────────────────────────────────────────
+        impl ravel_eloquent::ModelMeta for #struct_name {
+            fn table_name() -> &'static str {
+                #table_name_lit
+            }
+            fn columns() -> &'static [&'static str] {
+                &[#(#column_name_literals),*]
+            }
+            fn id_column() -> &'static str {
+                #id_name_lit
+            }
+        }
+
         // ── Eloquent query API ─────────────────────────────────────
         impl #struct_name {
             pub fn to_public(&self) -> #public_struct_name {
@@ -97,10 +111,12 @@ pub fn generate(input: &syn::DeriveInput) -> Result<TokenStream, syn::Error> {
                 }
             }
 
+            /// Start a new fluent query builder.
             pub fn query() -> ravel_eloquent::ModelQuery<Self> {
-                ravel_eloquent::ModelQuery::new().table(#table_name)
+                ravel_eloquent::ModelQuery::new().table(#table_name_lit)
             }
 
+            /// Add a WHERE equality condition and return a query builder.
             pub fn r#where<V: Into<sea_orm::Value>>(
                 col: impl AsRef<str>,
                 val: V,

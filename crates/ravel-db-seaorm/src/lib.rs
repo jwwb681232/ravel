@@ -24,3 +24,4 @@ pub use sea_orm_migration;
 // Re-export core traits for convenient access.
 pub use ravel_db_core::connection::ConnectionManager as ConnectionManagerTrait;
 pub use ravel_db_core::migration::MigrationRunner as MigrationRunnerTrait;
+pub use ravel_db_core::pagination::Page;

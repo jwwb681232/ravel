@@ -11,6 +11,7 @@ keywords = ["ravel", "eloquent", "orm", "sea-orm"]
 [dependencies]
 ravel-eloquent-macros = { path = "../ravel-eloquent-macros" }
 ravel-core = { path = "../ravel-core" }
+ravel-db-core = { path = "../ravel-db-core" }
 sea-orm = "2.0.0-rc.40"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
