@@ -97,7 +97,9 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
             .map(|c| {
                 data.get(c)
                     .map(quote_json_value)
-                    .unwrap_or_else(|| "DEFAULT".into())
+                    // Use NULL for missing values — works across all backends
+                    // including SQLite (triggers auto-increment for PK).
+                    .unwrap_or_else(|| "NULL".into())
             })
             .collect();
 

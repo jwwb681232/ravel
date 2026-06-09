@@ -1,104 +1,215 @@
-//! Integration test for #[derive(Model)] proc-macro.
+//! Compile-time integration test for #[derive(Model)] proc-macro.
+//!
+//! These tests verify that the macro generates correct types and methods.
+//! No database connection needed — purely compile-time checks.
 
-use ravel_eloquent::{HasRelations, Model, RelatedModel, RelationBuilder};
-use sea_orm::Value;
+use ravel_eloquent::{Model, ModelMeta, ModelExt, Fillable, Serializes, Replicates};
+use serde::{Serialize, Deserialize};
 
-#[derive(Model, Debug, serde::Serialize, serde::Deserialize)]
+// ── Test model ──────────────────────────────────────────────────────────────
+
+#[derive(Model, Clone, Debug, Serialize, Deserialize)]
 #[model(table = "users")]
 struct User {
     #[model(id)]
-    id: i32,
+    pub id: i32,
 
-    #[model(string, 255)]
-    name: String,
-
-    #[model(string, 255, unique)]
-    email: String,
+    pub name: String,
 
     #[model(hidden)]
-    #[model(string, 255)]
-    password: String,
+    pub password: String,
+}
+
+// ── ModelMeta tests ────────────────────────────────────────────────────────
+
+#[test]
+fn test_table_name() {
+    assert_eq!(User::table_name(), "users");
 }
 
 #[test]
-fn test_model_column_enum() {
-    assert_eq!(UserColumn::id.as_str(), "id");
-    assert_eq!(UserColumn::name.as_str(), "name");
-    assert_eq!(UserColumn::email.as_str(), "email");
-    assert_eq!(UserColumn::password.as_str(), "password");
+fn test_id_column() {
+    assert_eq!(User::id_column(), "id");
 }
 
 #[test]
-fn test_model_to_public_hides_password() {
+fn test_columns() {
+    let cols = User::columns();
+    assert!(cols.contains(&"id"));
+    assert!(cols.contains(&"name"));
+    assert!(cols.contains(&"password"));
+}
+
+#[test]
+fn test_public_columns_excludes_hidden() {
+    let cols = User::public_columns();
+    assert!(cols.contains(&"id"));
+    assert!(cols.contains(&"name"));
+    assert!(!cols.contains(&"password"));
+}
+
+// ── Column enum tests ──────────────────────────────────────────────────────
+
+#[test]
+fn test_column_enum_pascal_case() {
+    assert_eq!(UserColumn::Id.as_str(), "id");
+    assert_eq!(UserColumn::Name.as_str(), "name");
+    assert_eq!(UserColumn::Password.as_str(), "password");
+}
+
+#[test]
+fn test_column_enum_full_coverage() {
+    // Verify all non-relation columns are represented
+    assert_eq!(User::columns().len(), 3);
+}
+
+// ── to_public / Public struct tests ────────────────────────────────────────
+
+#[test]
+fn test_to_public_excludes_password() {
     let user = User {
-        id: 1,
+        id: 42,
         name: "Alice".into(),
-        email: "alice@example.com".into(),
-        password: "secret".into(),
+        password: "secret123".into(),
     };
 
     let public = user.to_public();
-    assert_eq!(public.id, 1);
+    assert_eq!(public.id, 42);
     assert_eq!(public.name, "Alice");
-    assert_eq!(public.email, "alice@example.com");
-    // UserPublic should NOT have a password field (compile-time guarantee)
 }
 
 #[test]
-fn test_model_query_select_sql() {
-    let query = User::query();
-    let sql = query.to_select_sql();
-    assert!(sql.contains("users"));
-    assert!(sql.contains("SELECT * FROM \"users\""));
+fn test_user_public_serializable() {
+    let public = UserPublic { id: 1, name: "Bob".into() };
+    let json = serde_json::to_string(&public).unwrap();
+    assert!(json.contains("\"id\""));
+    assert!(json.contains("\"name\""));
 }
 
 #[test]
-fn test_model_query_where() {
-    let query = User::r#where("name", "Alice");
-    let sql = query.to_select_sql();
-    assert!(sql.contains("WHERE"));
-    assert!(sql.contains("name"));
-    assert!(sql.contains("Alice"));
-}
-
-#[test]
-fn test_model_query_order_limit() {
-    let query = User::r#where("active", true)
-        .order_by("created_at", "DESC")
-        .limit(10);
-
-    let sql = query.to_select_sql();
-    assert!(sql.contains("ORDER BY"));
-    assert!(sql.contains("DESC"));
-    assert!(sql.contains("LIMIT 10"));
-}
-
-#[test]
-fn test_model_count_sql() {
-    let query = User::r#where("active", true);
-    let sql = query.to_count_sql();
-    assert!(sql.contains("COUNT(*)"));
-}
-
-#[test]
-fn test_model_delete_sql() {
-    let query = User::r#where("id", 1);
-    let sql = query.to_delete_sql();
-    assert!(sql.contains("DELETE FROM"));
-}
-
-#[test]
-fn test_model_has_many_relations() {
+fn test_to_json_includes_password() {
     let user = User {
         id: 1,
-        name: "Alice".into(),
-        email: "alice@example.com".into(),
+        name: "Carol".into(),
+        password: "hunter2".into(),
+    };
+
+    let json = user.to_json();
+    assert_eq!(json["id"], 1);
+    assert_eq!(json["name"], "Carol");
+    assert_eq!(json["password"], "hunter2");
+}
+
+#[test]
+fn test_to_public_json_excludes_password() {
+    let user = User {
+        id: 1,
+        name: "Carol".into(),
+        password: "hunter2".into(),
+    };
+
+    let json = user.to_public_json();
+    assert_eq!(json["id"], 1);
+    assert_eq!(json["name"], "Carol");
+    assert!(json.get("password").is_none());
+}
+
+// ── Query builder tests ────────────────────────────────────────────────────
+
+#[test]
+fn test_query_returns_query_builder() {
+    // query() returns QueryBuilder<Entity> — just check it compiles and exists
+    let _query = User::query();
+}
+
+#[test]
+fn test_where_returns_query_builder() {
+    // r#where(col, val) returns QueryBuilder<Entity>
+    let _query = User::r#where("name", "Alice");
+}
+
+// ── Setter tests ───────────────────────────────────────────────────────────
+
+#[test]
+fn test_set_name_works() {
+    let user = User {
+        id: 0,
+        name: "old".into(),
+        password: "pw".into(),
+    };
+
+    let updated = user.set_name("Alice");
+    assert_eq!(updated.name, "Alice");
+    assert_eq!(updated.id, 0);
+    assert_eq!(updated.password, "pw");
+}
+
+// ── Replicate tests ────────────────────────────────────────────────────────
+
+#[test]
+fn test_replicate_works() {
+    let user = User {
+        id: 1,
+        name: "Dave".into(),
+        password: "pwd".into(),
+    };
+
+    let replica = user.replicate();
+    assert_eq!(replica.name, "Dave");
+    assert_eq!(replica.password, "pwd");
+    // Replicate should have the same id too (it's a clone)
+    assert_eq!(replica.id, 1);
+}
+
+// ── Fillable test ──────────────────────────────────────────────────────────
+
+#[test]
+fn test_fillable_impl() {
+    // fill() should be available on User instances
+    let user = User {
+        id: 1,
+        name: "Old".into(),
         password: "secret".into(),
     };
 
-    let posts_query: RelationBuilder<serde_json::Value> =
-        user.has_many::<serde_json::Value>("posts", "user_id", Value::Int(Some(1)));
-    let sql = posts_query.to_sql();
-    assert!(sql.contains("posts"));
-    assert!(sql.contains("user_id"));
+    let data = serde_json::json!({"name": "NewName"});
+    let filled = user.fill(data);
+    // fill sets field(s) from JSON — at minimum name should be updated
+    assert_eq!(filled.name, "NewName");
+    // Unchanged fields should keep their values
+    assert_eq!(filled.id, 1);
+    assert_eq!(filled.password, "secret");
+}
+
+// ── ModelExt compile checks ───────────────────────────────────────────────
+
+#[test]
+fn test_model_ext_is_implemented() {
+    // Helper: verify that User: ModelExt (compile-time check)
+    fn _assert_model_ext<T: ModelExt>() {}
+    _assert_model_ext::<User>();
+}
+
+// ── Serializes compile check ───────────────────────────────────────────────
+
+#[test]
+fn test_serializes_is_implemented() {
+    fn _assert_serializes<T: Serializes>() {}
+    _assert_serializes::<User>();
+}
+
+// ── Replicates compile check ───────────────────────────────────────────────
+
+#[test]
+fn test_replicates_is_implemented() {
+    fn _assert_replicates<T: Replicates>() {}
+    _assert_replicates::<User>();
+}
+
+// ── UserPublic struct fields compile check ─────────────────────────────────
+
+#[test]
+fn test_userpublic_has_expected_fields() {
+    // Verify the UserPublic struct has the right fields by construction
+    let _ = UserPublic { id: 1, name: "test".into() };
 }

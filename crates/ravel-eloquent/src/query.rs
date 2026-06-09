@@ -1,119 +1,149 @@
-//! Type-safe query builder wrapping SeaORM's `Select<E>`.
+//! Type-safe query builder using `sea-query` instead of `EntityTrait`.
 //!
 //! Provides a fluent API similar to Laravel Eloquent but backed by
-//! SeaORM 2.0's type-safe query system instead of raw SQL strings.
+//! `sea-query`'s type-safe expression system instead of raw SQL strings.
+//! No `EntityTrait` dependency means no duplicate entity struct is needed.
 
 use sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, Order,
-    QueryFilter, QueryOrder, QuerySelect, Select, Value,
+    ColumnTrait, DatabaseConnection, Order, Statement, Value,
 };
+use sea_orm::sea_query::{self, Expr, Query, SelectStatement};
+use sea_orm::sea_query::ExprTrait;
+use sea_orm::ConnectionTrait;
 use serde::de::DeserializeOwned;
 
 use crate::error::{Result, RavelEloquentError};
 
 // ── QueryBuilder ───────────────────────────────────────────────────────
 
-/// Type-safe query builder wrapping SeaORM's `Select<E>`.
+/// Type-safe query builder using `sea-query` directly.
 ///
-/// `E` is the SeaORM entity type (not the model struct).
+/// No entity type parameter needed — columns, table name and result types
+/// are supplied when needed.
 ///
 /// # Example
 ///
 /// ```rust,ignore
 /// use ravel_eloquent::QueryBuilder;
 ///
-/// // Type-safe: use column enum directly
-/// let users = QueryBuilder::<Entity>::new()
-///     .filter(Column::Name, "Alice")
-///     .order_by_asc(Column::Id)
+/// let users: Vec<User> = QueryBuilder::new("users", &["id", "name", "email"])
+///     .filter(UserColumn::Name, "Alice")
+///     .order_by_asc(UserColumn::Id)
 ///     .get(&db).await?;
-///
-/// // Escape hatch to raw SeaORM Select
-/// let raw: Select<Entity> = query.into_select();
 /// ```
-pub struct QueryBuilder<E: EntityTrait> {
-    select: Select<E>,
+pub struct QueryBuilder {
+    select: SelectStatement,
+    columns: Vec<&'static str>,
 }
 
-impl<E: EntityTrait> QueryBuilder<E> {
-    /// Create a new query builder.
-    pub fn new() -> Self {
-        Self { select: E::find() }
+impl QueryBuilder {
+    /// Create a new query builder for `table_name` selecting `columns`.
+    pub fn new(table_name: &'static str, columns: &'static [&'static str]) -> Self {
+        let mut select = Query::select();
+        for col in columns {
+            let alias = sea_query::Alias::new(*col);
+            let iden: sea_query::DynIden = alias.into();
+            select.column(iden);
+        }
+        select.from(sea_query::Alias::new(table_name));
+        Self {
+            select,
+            columns: columns.to_vec(),
+        }
     }
 
-    /// Escape hatch: consume self and return the underlying SeaORM `Select<E>`.
-    pub fn into_select(self) -> Select<E> {
+    /// Escape hatch: consume self and return the underlying `SelectStatement`.
+    pub fn into_select(self) -> SelectStatement {
         self.select
     }
-}
 
-impl<E: EntityTrait> Default for QueryBuilder<E> {
-    fn default() -> Self {
-        Self::new()
+    async fn run<T: DeserializeOwned>(self, db: &DatabaseConnection) -> Result<Vec<T>> {
+        let backend = db.get_database_backend();
+        let sql = Self::build_sql(&self.select, backend);
+        let stmt = Statement::from_string(backend, sql);
+        let rows = db
+            .query_all_raw(stmt)
+            .await
+            .map_err(|e| RavelEloquentError::Database(e))?;
+        rows.iter()
+            .map(|row| row_to_model(row, &self.columns))
+            .collect()
+    }
+
+    fn build_sql(select: &SelectStatement, backend: sea_orm::DbBackend) -> String {
+        match backend {
+            sea_orm::DbBackend::MySql => select.to_string(sea_query::MysqlQueryBuilder),
+            sea_orm::DbBackend::Postgres => select.to_string(sea_query::PostgresQueryBuilder),
+            sea_orm::DbBackend::Sqlite => select.to_string(sea_query::SqliteQueryBuilder),
+            _ => {
+                // Fallback: use SQLite builder as default for unknown backends
+                select.to_string(sea_query::SqliteQueryBuilder)
+            }
+        }
     }
 }
 
 // ── WHERE conditions (type-safe column enum) ───────────────────────────
 
-impl<E: EntityTrait> QueryBuilder<E> {
+impl QueryBuilder {
     /// WHERE col = val
     pub fn filter(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
-        self.select = self.select.filter(col.eq(val.into()));
+        self.select.and_where(col.eq(val.into()));
         self
     }
 
     /// WHERE col > val
     pub fn filter_gt(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
-        self.select = self.select.filter(col.gt(val.into()));
+        self.select.and_where(col.gt(val.into()));
         self
     }
 
     /// WHERE col >= val
     pub fn filter_gte(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
-        self.select = self.select.filter(col.gte(val.into()));
+        self.select.and_where(col.gte(val.into()));
         self
     }
 
     /// WHERE col < val
     pub fn filter_lt(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
-        self.select = self.select.filter(col.lt(val.into()));
+        self.select.and_where(col.lt(val.into()));
         self
     }
 
     /// WHERE col <= val
     pub fn filter_lte(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
-        self.select = self.select.filter(col.lte(val.into()));
+        self.select.and_where(col.lte(val.into()));
         self
     }
 
     /// WHERE col != val
     pub fn filter_ne(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
-        self.select = self.select.filter(col.ne(val.into()));
+        self.select.and_where(col.ne(val.into()));
         self
     }
 
     /// WHERE col LIKE val
     pub fn filter_like(mut self, col: impl ColumnTrait, val: &str) -> Self {
-        self.select = self.select.filter(col.like(val));
+        self.select.and_where(col.like(val));
         self
     }
 
     /// WHERE col IN (vals...)
     pub fn filter_in(mut self, col: impl ColumnTrait, vals: Vec<impl Into<Value>>) -> Self {
         let values: Vec<Value> = vals.into_iter().map(|v| v.into()).collect();
-        self.select = self.select.filter(col.is_in(values));
+        self.select.and_where(col.is_in(values));
         self
     }
 
     /// WHERE col IS NULL
     pub fn filter_null(mut self, col: impl ColumnTrait) -> Self {
-        self.select = self.select.filter(col.is_null());
+        self.select.and_where(col.is_null());
         self
     }
 
     /// WHERE col IS NOT NULL
     pub fn filter_not_null(mut self, col: impl ColumnTrait) -> Self {
-        self.select = self.select.filter(col.is_not_null());
+        self.select.and_where(col.is_not_null());
         self
     }
 
@@ -124,14 +154,14 @@ impl<E: EntityTrait> QueryBuilder<E> {
         low: impl Into<Value>,
         high: impl Into<Value>,
     ) -> Self {
-        self.select = self.select.filter(col.between(low.into(), high.into()));
+        self.select.and_where(col.between(low.into(), high.into()));
         self
     }
 }
 
 // ── String-based WHERE (convenience for macro-generated code) ──────────
 
-impl<E: EntityTrait> QueryBuilder<E> {
+impl QueryBuilder {
     /// Filter by column name (string) — convenience for macro-generated code.
     ///
     /// Prefer the type-safe [`filter`](Self::filter) methods that accept the
@@ -139,10 +169,7 @@ impl<E: EntityTrait> QueryBuilder<E> {
     pub fn r#where(mut self, col: &str, val: impl Into<Value>) -> Self {
         use sea_orm::sea_query::{BinOper, ColumnRef, DynIden, SimpleExpr};
 
-        // Convert sea_orm::Value -> sea_query::Value -> SimpleExpr
-        let val_expr: SimpleExpr = sea_orm::sea_query::Value::from(val.into()).into();
-
-        // Build column reference and equality expression
+        let val_expr: SimpleExpr = sea_query::Value::from(val.into()).into();
         let col_ref: ColumnRef = DynIden::from(col.to_owned()).into();
         let condition = SimpleExpr::Binary(
             Box::new(SimpleExpr::Column(col_ref)),
@@ -150,118 +177,104 @@ impl<E: EntityTrait> QueryBuilder<E> {
             Box::new(val_expr),
         );
 
-        self.select = self.select.filter(condition);
+        self.select.and_where(condition);
         self
     }
 }
 
 // ── ORDER BY, LIMIT, OFFSET ────────────────────────────────────────────
 
-impl<E: EntityTrait> QueryBuilder<E> {
+impl QueryBuilder {
     /// ORDER BY col (Direction)
     pub fn order_by(mut self, col: impl ColumnTrait, order: Order) -> Self {
-        self.select = self.select.order_by(col, order);
+        let (_, col_name) = col.as_column_ref();
+        self.select.order_by(
+            sea_query::ColumnRef::Column(col_name.into()),
+            order,
+        );
         self
     }
 
     /// ORDER BY col ASC
     pub fn order_by_asc(mut self, col: impl ColumnTrait) -> Self {
-        self.select = self.select.order_by_asc(col);
+        let (_, col_name) = col.as_column_ref();
+        self.select.order_by(
+            sea_query::ColumnRef::Column(col_name.into()),
+            sea_query::Order::Asc,
+        );
         self
     }
 
     /// ORDER BY col DESC
     pub fn order_by_desc(mut self, col: impl ColumnTrait) -> Self {
-        self.select = self.select.order_by_desc(col);
+        let (_, col_name) = col.as_column_ref();
+        self.select.order_by(
+            sea_query::ColumnRef::Column(col_name.into()),
+            sea_query::Order::Desc,
+        );
         self
     }
 
     /// LIMIT n
     pub fn limit(mut self, n: u64) -> Self {
-        self.select = self.select.limit(n);
+        self.select.limit(n);
         self
     }
 
     /// OFFSET n
     pub fn offset(mut self, n: u64) -> Self {
-        self.select = self.select.offset(n);
-        self
-    }
-}
-
-// ── JOIN ───────────────────────────────────────────────────────────────
-
-impl<E: EntityTrait> QueryBuilder<E> {
-    /// INNER JOIN with a related entity.
-    pub fn inner_join<R: EntityTrait>(mut self, entity: R) -> Self
-    where
-        E: sea_orm::Related<R>,
-    {
-        self.select = self.select.inner_join(entity);
-        self
-    }
-
-    /// LEFT JOIN with a related entity.
-    pub fn left_join_related<R: EntityTrait>(mut self, entity: R) -> Self
-    where
-        E: sea_orm::Related<R>,
-    {
-        self.select = self.select.left_join(entity);
+        self.select.offset(n);
         self
     }
 }
 
 // ── Execution ──────────────────────────────────────────────────────────
 
-impl<E: EntityTrait> QueryBuilder<E> {
+impl QueryBuilder {
     /// Execute the query and return all matching rows.
-    pub async fn get(self, db: &DatabaseConnection) -> Result<Vec<E::Model>> {
-        self.select
-            .all(db)
-            .await
-            .map_err(|e| RavelEloquentError::Database(e))
+    pub async fn get<T: DeserializeOwned>(self, db: &DatabaseConnection) -> Result<Vec<T>> {
+        self.run(db).await
     }
 
     /// Execute the query and return the first matching row, if any.
-    pub async fn first(self, db: &DatabaseConnection) -> Result<Option<E::Model>> {
-        self.select
-            .one(db)
-            .await
-            .map_err(|e| RavelEloquentError::Database(e))
+    pub async fn first<T: DeserializeOwned>(mut self, db: &DatabaseConnection) -> Result<Option<T>> {
+        self.select.limit(1);
+        let mut items = self.run::<T>(db).await?;
+        Ok(items.pop())
     }
 
     /// Execute COUNT and return the number of matching rows.
     pub async fn count(self, db: &DatabaseConnection) -> Result<u64> {
-        let items = self
-            .select
-            .all(db)
+        let backend = db.get_database_backend();
+        let mut count_select = Query::select();
+        count_select
+            .expr(Expr::col(sea_query::Asterisk).count())
+            .from_subquery(self.select, sea_query::Alias::new("sub"));
+        let sql = Self::build_sql(&count_select, backend);
+        let stmt = Statement::from_string(backend, sql);
+        let rows = db
+            .query_all_raw(stmt)
             .await
             .map_err(|e| RavelEloquentError::Database(e))?;
-        Ok(items.len() as u64)
+        Ok(rows
+            .first()
+            .and_then(|r| r.try_get_by_index::<i64>(0).ok())
+            .unwrap_or(0) as u64)
     }
 
     /// Check whether any matching rows exist.
     pub async fn exists(self, db: &DatabaseConnection) -> Result<bool> {
-        let items = self
-            .select
-            .all(db)
-            .await
-            .map_err(|e| RavelEloquentError::Database(e))?;
-        Ok(!items.is_empty())
+        self.count(db).await.map(|c| c > 0)
     }
 
     /// Paginate results.
-    pub async fn paginate(
+    pub async fn paginate<T: DeserializeOwned>(
         self,
         db: &DatabaseConnection,
         page: u64,
         per_page: u64,
-    ) -> Result<Page<E::Model>> {
-        let all_items = self
-            .select
-            .all(db)
-            .await
-            .map_err(|e| RavelEloquentError::Database(e))?;
+    ) -> Result<Page<T>> {
+        let all_items = self.get::<T>(db).await?;
         let total = all_items.len() as u64;
         let offset = (page.saturating_sub(1)).saturating_mul(per_page) as usize;
         let items: Vec<_> = all_items
@@ -269,7 +282,7 @@ impl<E: EntityTrait> QueryBuilder<E> {
             .skip(offset)
             .take(per_page as usize)
             .collect();
-        Ok(Page::new(items, total, page.max(1), per_page))
+        Ok(Page::new(items, total, Ord::max(page, 1), per_page))
     }
 }
 

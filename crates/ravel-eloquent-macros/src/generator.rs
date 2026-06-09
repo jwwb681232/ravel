@@ -2,22 +2,21 @@
 //!
 //! Generates:
 //!
-//! 1.  SeaORM entity definition — `#[sea_orm::model]` + `DeriveEntityModel`
-//! 2.  `{StructName}Column` enum — PascalCase variants, `as_str()` method
-//! 3.  `{StructName}Public` struct — non-hidden, non-relation fields
-//! 4.  `ModelMeta` trait impl
-//! 5.  Inherent impl block — `to_public()`, `query()`, `r#where()`, CRUD, setters
-//! 6.  `ModelExt` trait impl
+//! 1.  `{StructName}Column` enum — PascalCase variants, `as_str()` method
+//! 2.  `{StructName}Public` struct — non-hidden, non-relation fields
+//! 3.  `ModelMeta` trait impl
+//! 4.  Inherent impl block — `to_public()`, `query()`, `r#where()`, CRUD, setters
+//! 5.  `ModelExt` trait impl
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use crate::attrs::{ColumnType, FieldAttr, ModelAttrs, RelationKind, to_pascal_case};
+use crate::attrs::{ColumnType, ModelAttrs, to_pascal_case};
 
 // ── Public entry point ─────────────────────────────────────────────────────
 
 pub fn generate(input: &syn::DeriveInput) -> syn::Result<TokenStream> {
     let model = crate::attrs::parse_model(input)?;
-    let expanded = generate_all(&model, &input.ident, &input.vis, &input.generics);
+    let expanded = generate_all(&model, &input.ident);
     Ok(expanded)
 }
 
@@ -26,13 +25,10 @@ pub fn generate(input: &syn::DeriveInput) -> syn::Result<TokenStream> {
 fn generate_all(
     model: &ModelAttrs,
     struct_name: &syn::Ident,
-    vis: &syn::Visibility,
-    generics: &syn::Generics,
 ) -> TokenStream {
     let public_name = format_ident!("{}Public", struct_name);
     let column_enum = format_ident!("{}Column", struct_name);
 
-    let entity      = generate_entity(model, struct_name, vis, generics);
     let columns     = generate_column_enum(model, &column_enum);
     let public_     = generate_public_struct(model, &public_name);
     let meta        = generate_model_meta(model, struct_name, &public_name, &column_enum);
@@ -40,8 +36,6 @@ fn generate_all(
     let traits      = generate_trait_impls(model, struct_name);
 
     quote! {
-        #entity
-
         #columns
 
         #public_
@@ -51,171 +45,6 @@ fn generate_all(
         #methods
 
         #traits
-    }
-}
-
-// ── 1. SeaORM entity definition ────────────────────────────────────────────
-
-fn generate_entity(
-    model: &ModelAttrs,
-    struct_name: &syn::Ident,
-    vis: &syn::Visibility,
-    generics: &syn::Generics,
-) -> TokenStream {
-    let table_name = &model.table_name;
-
-    // Build field list from parsed attributes.
-    let mut fields: Vec<TokenStream> = model
-        .fields
-        .iter()
-        .map(|f| {
-            let name = format_ident!("{}", f.field_name);
-            let ty = &f.field_type;
-
-            if f.relation.is_some() {
-                generate_relation_field(f, &name, ty)
-            } else {
-                let attrs = generate_column_attr(f);
-                quote! {
-                    #attrs
-                    pub #name: #ty
-                }
-            }
-        })
-        .collect();
-
-    // Synthesize created_at / updated_at when the user declared
-    // `#[model(timestamps)]` without actually writing the fields.
-    if model.has_timestamps {
-        let has_created = model.fields.iter().any(|f| f.field_name == "created_at");
-        let has_updated = model.fields.iter().any(|f| f.field_name == "updated_at");
-
-        if !has_created {
-            fields.push(quote! {
-                #[sea_orm(column_name = "created_at")]
-                pub created_at: chrono::NaiveDateTime
-            });
-        }
-        if !has_updated {
-            fields.push(quote! {
-                #[sea_orm(column_name = "updated_at")]
-                pub updated_at: chrono::NaiveDateTime
-            });
-        }
-    }
-
-    quote! {
-        #[sea_orm::model]
-        #[derive(Clone, Debug, PartialEq, Eq, sea_orm::DeriveEntityModel)]
-        #[sea_orm(table_name = #table_name)]
-        #vis struct #struct_name #generics {
-            #(#fields,)*
-        }
-    }
-}
-
-/// SeaORM column-level attributes for a non-relation field.
-fn generate_column_attr(f: &FieldAttr) -> TokenStream {
-    let mut attrs: Vec<TokenStream> = Vec::new();
-
-    match f.col_type {
-        ColumnType::Id => {
-            attrs.push(quote! { primary_key });
-            attrs.push(quote! { auto_increment });
-        }
-        ColumnType::Uuid => {
-            attrs.push(quote! { primary_key });
-            attrs.push(quote! { auto_increment = false });
-        }
-        ColumnType::String(Some(len)) => {
-            let ct = format!("String(Some({}))", len);
-            attrs.push(quote! { column_type = #ct });
-        }
-        ColumnType::Text => {
-            attrs.push(quote! { column_type = "Text" });
-        }
-        ColumnType::DateTime => {
-            attrs.push(quote! { column_type = "DateTime" });
-        }
-        // Integer, BigInt, Boolean, Float, Json, String(None)  are
-        // inferred by SeaORM from the Rust type — no extra attribute.
-        _ => {}
-    }
-
-    if f.is_unique {
-        attrs.push(quote! { unique });
-    }
-    if f.is_nullable {
-        attrs.push(quote! { nullable });
-    }
-    // Only emit column_name when it differs from the Rust field name.
-    if f.column_name != f.field_name {
-        attrs.push(quote! { column_name = #(&f.column_name) });
-    }
-
-    if attrs.is_empty() {
-        return quote! {};
-    }
-    quote! { #[sea_orm(#(#attrs),*)] }
-}
-
-/// Convert an entity type (e.g. `Post`) to SeaORM's dense attribute path
-/// (e.g. `"super::post::Entity"`).
-fn entity_type_to_seaorm_string(entity_type: &syn::Type) -> String {
-    if let syn::Type::Path(type_path) = entity_type {
-        if let Some(segment) = type_path.path.segments.last() {
-            let ident = segment.ident.to_string();
-            let lower = ident.to_lowercase();
-            return format!("super::{}::Entity", lower);
-        }
-    }
-    // Fallback — should not happen for valid SeaORM models.
-    "super::entity::Entity".to_string()
-}
-
-/// SeaORM relation attribute + field for a relation field.
-fn generate_relation_field(
-    f: &FieldAttr,
-    field_name: &syn::Ident,
-    field_type: &syn::Type,
-) -> TokenStream {
-    let rel = f
-        .relation
-        .as_ref()
-        .expect("generate_relation_field called for a non-relation field");
-
-    match rel {
-        RelationKind::HasMany { entity_type, via } => {
-            let entity_str = entity_type_to_seaorm_string(entity_type);
-            match via {
-                Some(v) => {
-                    quote! {
-                        #[sea_orm(has_many = #entity_str, via = #v)]
-                        pub #field_name: #field_type
-                    }
-                }
-                None => {
-                    quote! {
-                        #[sea_orm(has_many = #entity_str)]
-                        pub #field_name: #field_type
-                    }
-                }
-            }
-        }
-        RelationKind::HasOne { entity_type } => {
-            let entity_str = entity_type_to_seaorm_string(entity_type);
-            quote! {
-                #[sea_orm(has_one = #entity_str)]
-                pub #field_name: #field_type
-            }
-        }
-        RelationKind::BelongsTo { entity_type, from, to } => {
-            let entity_str = entity_type_to_seaorm_string(entity_type);
-            quote! {
-                #[sea_orm(belongs_to = #entity_str, from = #from, to = #to)]
-                pub #field_name: #field_type
-            }
-        }
     }
 }
 
@@ -254,6 +83,12 @@ fn generate_column_enum(model: &ModelAttrs, enum_name: &syn::Ident) -> TokenStre
                 match self {
                     #(#as_str_arms,)*
                 }
+            }
+        }
+
+        impl sea_orm::sea_query::Iden for #enum_name {
+            fn unquoted(&self) -> &str {
+                self.as_str()
             }
         }
     }
@@ -434,19 +269,19 @@ fn generate_to_public(model: &ModelAttrs, struct_name: &syn::Ident) -> TokenStre
 
 /// `query()` and `r#where()` shorthands.
 ///
-/// Uses `Entity` — the entity struct generated by SeaORM 2.0's
-/// `DeriveEntityModel` in dense format.  The model struct itself
-/// does *not* implement `EntityTrait`; only `Entity` does.
+/// Uses `ModelMeta` (already generated) to get table and column names,
+/// then creates a `QueryBuilder` that operates on `sea-query` directly
+/// without needing a SeaORM entity type.
 fn generate_query_shorthands(_struct_name: &syn::Ident) -> TokenStream {
     quote! {
-        pub fn query() -> ravel_eloquent::QueryBuilder<Entity> {
-            ravel_eloquent::QueryBuilder::new()
+        pub fn query() -> ravel_eloquent::QueryBuilder {
+            ravel_eloquent::QueryBuilder::new(<Self as ravel_eloquent::ModelMeta>::table_name(), <Self as ravel_eloquent::ModelMeta>::columns())
         }
 
         pub fn r#where(
             col: &str,
             val: impl Into<sea_orm::Value>,
-        ) -> ravel_eloquent::QueryBuilder<Entity> {
+        ) -> ravel_eloquent::QueryBuilder {
             Self::query().r#where(col, val)
         }
     }
@@ -515,9 +350,57 @@ fn generate_setters(model: &ModelAttrs) -> TokenStream {
 
 // ── 6. Trait implementations ───────────────────────────────────────────────
 
-fn generate_trait_impls(_model: &ModelAttrs, struct_name: &syn::Ident) -> TokenStream {
-    quote! {
-        impl ravel_eloquent::ModelExt for #struct_name {}
-    }
+fn generate_trait_impls(model: &ModelAttrs, struct_name: &syn::Ident) -> TokenStream {
+    let public_name = format_ident!("{}Public", struct_name);
+
+    let mut impls: Vec<TokenStream> = Vec::new();
+
+    // ModelExt — auto-implemented by the macro
+    impls.push(quote! { impl ravel_eloquent::ModelExt for #struct_name {} });
+
+    // ActiveModelExt — provides save/delete/update/refresh with default impls
+    impls.push(quote! { impl ravel_eloquent::ActiveModelExt for #struct_name {} });
+
+    // Serializes — the required `to_public()` method delegates to the inherent
+    // method (which takes precedence over the trait method, avoiding recursion).
+    impls.push(quote! {
+        impl ravel_eloquent::Serializes for #struct_name {
+            fn to_public(&self) -> #public_name {
+                self.to_public()
+            }
+        }
+    });
+
+    // Replicates — has a default impl (just clone), so a blank impl suffices.
+    impls.push(quote! { impl ravel_eloquent::Replicates for #struct_name {} });
+
+    // Fillable: field-by-field fill from JSON
+    // Uses `and_then` + `unwrap_or` pattern — the closure does NOT capture
+    // `self` fields, so there is no borrow conflict with struct construction.
+    let fill_fields: Vec<TokenStream> = model
+        .fields
+        .iter()
+        .filter(|f| f.relation.is_none())
+        .map(|f| {
+            let name = format_ident!("{}", f.field_name);
+            quote! {
+                #name: data.get(stringify!(#name))
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or(self.#name)
+            }
+        })
+        .collect();
+
+    impls.push(quote! {
+        impl ravel_eloquent::Fillable for #struct_name {
+            fn fill(self, data: serde_json::Value) -> Self {
+                Self {
+                    #(#fill_fields,)*
+                }
+            }
+        }
+    });
+
+    quote! { #(#impls)* }
 }
 
