@@ -19,12 +19,16 @@
 pub mod error;
 pub use error::{RavelEloquentError, Result};
 
+pub mod fillable;
 pub mod model_traits;
 mod query;
 mod relations;
 
-pub use model_traits::ModelMeta;
-pub use query::{ModelExt, ModelQuery, Page, defaults};
+pub use fillable::Fillable;
+pub use model_traits::{
+    ActiveModelExt, HasTimestamps, ModelExt, ModelMeta, Replicates, Serializes,
+};
+pub use query::{Page, QueryBuilder};
 pub use ravel_eloquent_macros::Model;
 pub use relations::{HasRelations, RelatedModel, RelationBuilder};
 pub use sea_orm;
