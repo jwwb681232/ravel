@@ -108,7 +108,7 @@ impl<R: EntityTrait> RelationQuery<R> {
         self.select
             .all(db)
             .await
-            .map_err(|e| RavelEloquentError::Database(e))
+            .map_err(RavelEloquentError::Database)
     }
 
     /// Execute and return the first matching related row, if any.
@@ -116,7 +116,7 @@ impl<R: EntityTrait> RelationQuery<R> {
         self.select
             .one(db)
             .await
-            .map_err(|e| RavelEloquentError::Database(e))
+            .map_err(RavelEloquentError::Database)
     }
 
     /// Return the number of matching related rows.
@@ -125,7 +125,7 @@ impl<R: EntityTrait> RelationQuery<R> {
             .select
             .all(db)
             .await
-            .map_err(|e| RavelEloquentError::Database(e))?;
+            .map_err(RavelEloquentError::Database)?;
         Ok(items.len() as u64)
     }
 
@@ -145,7 +145,7 @@ impl<R: EntityTrait> RelationQuery<R> {
             .select
             .all(db)
             .await
-            .map_err(|e| RavelEloquentError::Database(e))?;
+            .map_err(RavelEloquentError::Database)?;
         let total = all_items.len() as u64;
         let offset = (page.saturating_sub(1)).saturating_mul(per_page) as usize;
         let items: Vec<_> = all_items

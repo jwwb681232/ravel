@@ -62,7 +62,7 @@ impl QueryBuilder {
         let rows = db
             .query_all_raw(stmt)
             .await
-            .map_err(|e| RavelEloquentError::Database(e))?;
+            .map_err(RavelEloquentError::Database)?;
         rows.iter()
             .map(|row| row_to_model(row, &self.columns))
             .collect()
@@ -167,7 +167,7 @@ impl QueryBuilder {
     pub fn r#where(mut self, col: &str, val: impl Into<Value>) -> Self {
         use sea_orm::sea_query::{BinOper, ColumnRef, DynIden, SimpleExpr};
 
-        let val_expr: SimpleExpr = sea_query::Value::from(val.into()).into();
+        let val_expr: SimpleExpr = val.into().into();
         let col_ref: ColumnRef = DynIden::from(col.to_owned()).into();
         let condition = SimpleExpr::Binary(
             Box::new(SimpleExpr::Column(col_ref)),
@@ -254,7 +254,7 @@ impl QueryBuilder {
         let rows = db
             .query_all_raw(stmt)
             .await
-            .map_err(|e| RavelEloquentError::Database(e))?;
+            .map_err(RavelEloquentError::Database)?;
         Ok(rows
             .first()
             .and_then(|r| r.try_get_by_index::<i64>(0).ok())

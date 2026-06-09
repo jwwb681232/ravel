@@ -47,7 +47,7 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
         let rows = db
             .query_all_raw(stmt)
             .await
-            .map_err(|e| RavelEloquentError::Database(e))?;
+            .map_err(RavelEloquentError::Database)?;
         if let Some(row) = rows.into_iter().next() {
             crate::query::row_to_model(&row, Self::columns()).map(Some)
         } else {
@@ -73,7 +73,7 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
         let rows = db
             .query_all_raw(Statement::from_string(db.get_database_backend(), sql))
             .await
-            .map_err(|e| RavelEloquentError::Database(e))?;
+            .map_err(RavelEloquentError::Database)?;
         rows.into_iter()
             .map(|row| crate::query::row_to_model(&row, Self::columns()))
             .collect()
@@ -106,7 +106,7 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
         let rows = db
             .query_all_raw(Statement::from_string(db.get_database_backend(), sql))
             .await
-            .map_err(|e| RavelEloquentError::Database(e))?;
+            .map_err(RavelEloquentError::Database)?;
         crate::query::row_to_model(
             &rows
                 .into_iter()
@@ -128,7 +128,7 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
         );
         db.execute_unprepared(&sql)
             .await
-            .map_err(|e| RavelEloquentError::Database(e))?;
+            .map_err(RavelEloquentError::Database)?;
         Ok(())
     }
 }
@@ -183,7 +183,7 @@ pub trait ActiveModelExt: ModelExt {
             );
             db.execute_unprepared(&sql)
                 .await
-                .map_err(|e| RavelEloquentError::Database(e))?;
+                .map_err(RavelEloquentError::Database)?;
 
             let id_for_fetch = json_val_to_sea_value(id_val);
             Self::find(db, id_for_fetch)
@@ -231,7 +231,7 @@ pub trait ActiveModelExt: ModelExt {
         );
         db.execute_unprepared(&sql)
             .await
-            .map_err(|e| RavelEloquentError::Database(e))?;
+            .map_err(RavelEloquentError::Database)?;
         Ok(())
     }
 
@@ -304,7 +304,7 @@ pub trait HasTimestamps: ActiveModelExt {
         );
         db.execute_unprepared(&sql)
             .await
-            .map_err(|e| RavelEloquentError::Database(e))?;
+            .map_err(RavelEloquentError::Database)?;
 
         let id_for_fetch = json_val_to_sea_value(id_val);
         Self::find(db, id_for_fetch)

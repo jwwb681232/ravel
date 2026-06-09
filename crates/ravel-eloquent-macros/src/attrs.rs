@@ -116,11 +116,10 @@ pub struct ModelAttrs {
 
 /// Check whether a type is `Option<T>`.
 pub fn is_option_type(ty: &Type) -> bool {
-    if let Type::Path(type_path) = ty {
-        if let Some(segment) = type_path.path.segments.last() {
+    if let Type::Path(type_path) = ty
+        && let Some(segment) = type_path.path.segments.last() {
             return segment.ident == "Option";
         }
-    }
     false
 }
 
@@ -128,15 +127,12 @@ pub fn is_option_type(ty: &Type) -> bool {
 ///
 /// Returns `None` when the type has no angle-bracketed arguments.
 pub fn extract_first_generic_arg(ty: &Type) -> Option<Type> {
-    if let Type::Path(type_path) = ty {
-        if let Some(segment) = type_path.path.segments.last() {
-            if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                if let Some(syn::GenericArgument::Type(ty)) = args.args.first() {
+    if let Type::Path(type_path) = ty
+        && let Some(segment) = type_path.path.segments.last()
+            && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                && let Some(syn::GenericArgument::Type(ty)) = args.args.first() {
                     return Some(ty.clone());
                 }
-            }
-        }
-    }
     None
 }
 
@@ -211,6 +207,7 @@ fn parse_container_attrs(attrs: &[Attribute]) -> Result<(String, bool), syn::Err
 }
 
 /// Process a single `Meta` item from a `#[model(...)]` attribute.
+#[allow(clippy::too_many_arguments)]
 fn apply_meta(
     meta: &syn::Meta,
     col_type: &mut ColumnType,
@@ -284,49 +281,42 @@ fn apply_meta(
         syn::Meta::List(list) => {
             if list.path.is_ident("string") {
                 // #[model(string(254))]
-                if let Ok(lit) = syn::parse2::<syn::LitInt>(list.tokens.clone()) {
-                    if let Ok(n) = lit.base10_parse::<usize>() {
+                if let Ok(lit) = syn::parse2::<syn::LitInt>(list.tokens.clone())
+                    && let Ok(n) = lit.base10_parse::<usize>() {
                         *col_type = ColumnType::String(Some(n));
                     }
-                }
             }
         }
         syn::Meta::NameValue(nv) => {
             if nv.path.is_ident("column") {
-                if let syn::Expr::Lit(expr_lit) = &nv.value {
-                    if let syn::Lit::Str(s) = &expr_lit.lit {
+                if let syn::Expr::Lit(expr_lit) = &nv.value
+                    && let syn::Lit::Str(s) = &expr_lit.lit {
                         *column_name = s.value();
                     }
-                }
             } else if nv.path.is_ident("via") {
-                if let syn::Expr::Lit(expr_lit) = &nv.value {
-                    if let syn::Lit::Str(s) = &expr_lit.lit {
-                        if let Some(RelationKind::HasMany { via, .. }) = relation {
+                if let syn::Expr::Lit(expr_lit) = &nv.value
+                    && let syn::Lit::Str(s) = &expr_lit.lit
+                        && let Some(RelationKind::HasMany { via, .. }) = relation {
                             *via = Some(s.value());
                         }
-                    }
-                }
             } else if nv.path.is_ident("from") {
-                if let syn::Expr::Lit(expr_lit) = &nv.value {
-                    if let syn::Lit::Str(s) = &expr_lit.lit {
+                if let syn::Expr::Lit(expr_lit) = &nv.value
+                    && let syn::Lit::Str(s) = &expr_lit.lit {
                         if let Some(RelationKind::BelongsTo { from, .. }) = relation {
                             *from = s.value();
                         } else if relation.is_none() {
                             *pending_from = Some(s.value());
                         }
                     }
-                }
-            } else if nv.path.is_ident("to") {
-                if let syn::Expr::Lit(expr_lit) = &nv.value {
-                    if let syn::Lit::Str(s) = &expr_lit.lit {
+            } else if nv.path.is_ident("to")
+                && let syn::Expr::Lit(expr_lit) = &nv.value
+                    && let syn::Lit::Str(s) = &expr_lit.lit {
                         if let Some(RelationKind::BelongsTo { to, .. }) = relation {
                             *to = s.value();
                         } else if relation.is_none() {
                             *pending_to = Some(s.value());
                         }
                     }
-                }
-            }
         }
     }
 }
@@ -356,8 +346,8 @@ fn parse_field_attrs(field: &syn::Field) -> FieldAttr {
             continue;
         }
         // Parse the tokens inside #[model(...)] as comma-separated Meta items.
-        if let syn::Meta::List(list) = &attr.meta {
-            if let Ok(metas) = syn::parse2::<MetaVec>(list.tokens.clone()) {
+        if let syn::Meta::List(list) = &attr.meta
+            && let Ok(metas) = syn::parse2::<MetaVec>(list.tokens.clone()) {
                 for meta in &metas.0 {
                     apply_meta(
                         meta,
@@ -374,7 +364,6 @@ fn parse_field_attrs(field: &syn::Field) -> FieldAttr {
                     );
                 }
             }
-        }
     }
 
     FieldAttr {
