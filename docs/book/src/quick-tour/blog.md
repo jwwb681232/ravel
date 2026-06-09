@@ -1,6 +1,6 @@
 # Quick Tour: Building a Blog
 
-A complete blog with user registration, login, CRUD posts, and logout. All code uses the facade API and `#[derive(Model)]` ORM.
+A complete blog with user registration, login, CRUD posts, and logout. All code uses the facade API and `#[derive(Model)]` Eloquent ORM.
 
 ---
 
@@ -27,12 +27,11 @@ ravel-core = { path = "../crates/ravel-core" }
 ravel-facades = { path = "../crates/ravel-facades" }
 ravel-http = { path = "../crates/ravel-http" }
 ravel-eloquent = { path = "../crates/ravel-eloquent" }
+ravel-db-seaorm = { path = "../crates/ravel-db-seaorm" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
-anyhow = "1"
-sea-orm = { version = "2.0.0-rc.40", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
+sea-orm = { version = "2", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
 ```
 
 ---
@@ -52,52 +51,155 @@ host = "127.0.0.1"
 port = 3000
 ```
 
-Migrations (`ravel make:migration`):
+Create a `DatabaseServiceProvider` to manage the connection:
 
 ```rust
-// users: schema.create("users", |t| { t.id(); t.string("name",255);
-//   t.string("email",255).unique(); t.string("password",255); t.timestamps(); });
-// posts: schema.create("posts", |t| { t.id(); t.string("title",255);
-//   t.text("body"); t.integer("user_id"); t.timestamps(); });
+// bootstrap/providers/database.rs
+use ravel_core::app::ServiceProvider;
+use ravel_core::container::Container;
+use ravel_db_seaorm::connection::ConnectionManager;
+use sea_orm::DatabaseConnection;
+use std::sync::OnceLock;
+
+static DB: OnceLock<DatabaseConnection> = OnceLock::new();
+
+pub fn db() -> &'static DatabaseConnection {
+    DB.get().expect("Database not initialized — call DatabaseServiceProvider first")
+}
+
+pub struct DatabaseServiceProvider;
+
+impl ServiceProvider for DatabaseServiceProvider {
+    fn register(&self, _container: &Container) -> anyhow::Result<()> {
+        let manager = ConnectionManager::from_config("config")?;
+        let conn = smol::block_on(manager.connect("default"))?;
+        DB.set(conn).ok();
+        Ok(())
+    }
+
+    fn name(&self) -> &str { "DatabaseServiceProvider" }
+}
+```
+
+Migrations — use `ravel make:migration` to scaffold:
+
+```rust
+// create_users_table
+use ravel_db_core::schema::Schema;
+
+fn up() {
+    Schema::create("users", |t| {
+        t.id();
+        t.string("name", 255);
+        t.string("email", 255).unique();
+        t.string("password", 255);
+        t.timestamps();
+    });
+}
+
+// create_posts_table
+fn up() {
+    Schema::create("posts", |t| {
+        t.id();
+        t.string("title", 255);
+        t.text("body");
+        t.integer("user_id");
+        t.timestamps();
+    });
+}
 ```
 
 Run `ravel migrate`.
 
 ---
 
-## 3. User Registration
+## 3. Models
 
-### Model
+Define Eloquent models with `#[derive(Model)]`. The `timestamps` container attribute
+auto-adds `created_at` / `updated_at` fields (no need to declare them manually).
 
 ```rust
+// src/models/user.rs
 use ravel_eloquent::Model;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Model, Serialize, Deserialize)]
-#[model(table = "users")]
+#[model(table = "users", timestamps)]
 pub struct User {
-    #[model(id)] pub id: i32,
-    #[model(string, 255)] pub name: String,
-    #[model(string, 255, unique)] pub email: String,
-    #[model(hidden)] pub password: String,
-    #[model(timestamps)] pub created_at: chrono::NaiveDateTime,
-    #[model(timestamps)] pub updated_at: chrono::NaiveDateTime,
+    #[model(id)]
+    pub id: i32,
+
+    #[model(string, 255)]
+    pub name: String,
+
+    #[model(string, 255, unique)]
+    pub email: String,
+
+    #[model(hidden)]
+    pub password: String,
 }
 ```
 
-`#[derive(Model)]` generates `UserColumn`, `UserPublic`, `User::query()`, and `User::r#where()`.
+```rust
+// src/models/post.rs
+use ravel_eloquent::Model;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Model, Serialize, Deserialize)]
+#[model(table = "posts", timestamps)]
+pub struct Post {
+    #[model(id)]
+    pub id: i32,
+
+    #[model(string, 255)]
+    pub title: String,
+
+    #[model(text)]
+    pub body: String,
+
+    #[model(integer)]
+    pub user_id: i32,
+}
+
+impl Post {
+    pub fn owned_by(&self, uid: i32) -> bool {
+        self.user_id == uid
+    }
+}
+```
+
+`#[derive(Model)]` generates:
+- `UserColumn` / `PostColumn` enums (PascalCase variants, `as_str()`)
+- `UserPublic` / `PostPublic` structs (hidden fields excluded)
+- `ModelMeta`, `ModelExt`, `ActiveModelExt`, `Fillable`, `Serializes`, `Replicates` trait impls
+- `query()`, `r#where()`, `find()`, `find_or_fail()`, `all()`, `create()`, `delete_by_id()`
+- `save()`, `insert()`, `update()`, `delete()`, `refresh()`, `replicate()`, `touch()`
+- `set_name()`, `set_email()`, … per-field chainable setters
+- `to_public()`, `to_json()`, `to_public_json()`, `fill()`
+
+---
+
+## 4. User Registration
 
 ### Form Request & Handler
 
 ```rust
 use ravel_http::form_request::{FormRequest, Validated};
 use ravel_http::validation::{FieldRule, Rule};
-use axum::response::IntoResponse;
-use ravel_facades::{Hash, redirect, Session};
 use ravel_http::error::RavelError;
+use ravel_facades::{Hash, redirect, Session};
+use axum::response::IntoResponse;
+use serde::Deserialize;
+
+use crate::models::user::User;
+use crate::providers::database::db;
 
 #[derive(Debug, Deserialize)]
-pub struct RegisterRequest { pub name: String, pub email: String, pub password: String }
+pub struct RegisterRequest {
+    pub name: String,
+    pub email: String,
+    pub password: String,
+}
 
 impl FormRequest for RegisterRequest {
     fn rules() -> Vec<FieldRule> {
@@ -114,94 +216,133 @@ pub async fn register(
 ) -> Result<impl IntoResponse, RavelError> {
     let hashed = Hash::make(&req.password)
         .map_err(|e| RavelError::internal(format!("Hash failed: {e}")))?;
-    User::create(serde_json::json!({"name":req.name,"email":req.email,"password":hashed}), &db())
-        .await.map_err(|e| RavelError::internal(e.to_string()))?;
+
+    // Eloquent: create from JSON
+    User::create(
+        serde_json::json!({"name": req.name, "email": req.email, "password": hashed}),
+        db(),
+    )
+    .await
+    .map_err(|e| RavelError::internal(e.to_string()))?;
+
     Session::flash("status", "Registration successful! Please log in.");
     Ok(redirect("/login"))
 }
 ```
 
-## 4. Login
+---
+
+## 5. Login
 
 ```rust
+use ravel_facades::Auth;
+use crate::models::user::User;
+
 #[derive(Debug, Deserialize)]
-pub struct LoginRequest { pub email: String, pub password: String }
+pub struct LoginRequest {
+    pub email: String,
+    pub password: String,
+}
 
 impl FormRequest for LoginRequest {
     fn rules() -> Vec<FieldRule> {
-        vec![FieldRule::new("email", vec![Rule::Required, Rule::Email]),
-             FieldRule::new("password", vec![Rule::Required])]
+        vec![
+            FieldRule::new("email", vec![Rule::Required, Rule::Email]),
+            FieldRule::new("password", vec![Rule::Required]),
+        ]
     }
 }
-
-use ravel_facades::Auth;
 
 pub async fn login(
     Validated(req): Validated<LoginRequest>,
 ) -> Result<impl IntoResponse, RavelError> {
-    let user = find_user_by_email(&req.email).await
-        .ok_or(RavelError::unauthorized("Invalid credentials"))?;
-    if !Hash::check(&req.password, &user.password)? {
+    // Eloquent: query by email, get first match
+    let user: Option<User> = User::query()
+        .r#where("email", &req.email)
+        .first(db())
+        .await
+        .map_err(|e| RavelError::internal(e.to_string()))?;
+
+    let user = user.ok_or(RavelError::unauthorized("Invalid credentials"))?;
+
+    if !Hash::check(&req.password, &user.password)
+        .map_err(|e| RavelError::internal(e.to_string()))?
+    {
         return Err(RavelError::unauthorized("Invalid credentials"));
     }
+
     Auth::login(&user.id);
     Session::flash("status", "Welcome back!");
     Ok(redirect("/posts"))
 }
 ```
 
-Flow: `Validated<T>` → find user → `Hash::check()` → `Auth::login()` → flash → redirect.
+Flow: `Validated<T>` → query user → `Hash::check()` → `Auth::login()` → flash → redirect.
 
 ---
 
-## 5. Posts CRUD
+## 6. Posts CRUD
 
-### Model
+All handlers now use the type-safe Eloquent API rather than raw SQL strings.
+
+### List all posts
 
 ```rust
-#[derive(Debug, Clone, Model, Serialize, Deserialize)]
-#[model(table = "posts")]
-pub struct Post {
-    #[model(id)] pub id: i32,
-    #[model(string, 255)] pub title: String,
-    #[model(text)] pub body: String,
-    #[model(integer)] pub user_id: i32,
-    #[model(timestamps)] pub created_at: chrono::NaiveDateTime,
-    #[model(timestamps)] pub updated_at: chrono::NaiveDateTime,
+use crate::models::post::Post;
+
+pub async fn index() -> Result<impl IntoResponse, RavelError> {
+    // Eloquent: type-safe query with ordering
+    let posts = Post::query()
+        .order_by_desc(PostColumn::CreatedAt)
+        .get(db())
+        .await
+        .map_err(|e| RavelError::internal(e.to_string()))?;
+
+    Ok(axum::Json(serde_json::json!({ "posts": posts })))
 }
-impl Post { pub fn owned_by(&self, uid: i32) -> bool { self.user_id == uid } }
 ```
 
-### List & Show
+### Show a single post
 
 ```rust
-pub async fn index() -> Result<impl IntoResponse, RavelError> {
-    let sql = Post::query().order_by("created_at", "DESC").to_select_sql();
-    Ok(axum::Json(serde_json::json!({ "sql": sql }))) // render via View
-}
+use axum::extract::Path;
 
 pub async fn show(Path(id): Path<i32>) -> Result<impl IntoResponse, RavelError> {
-    let post = find_one::<Post>(&Post::r#where("id", id).to_select_sql()).await
-        .ok_or(RavelError::not_found("Post not found"))?;
-    Ok(axum::Json(serde_json::json!(post)))
+    // Eloquent: find by primary key, error if missing
+    let post = Post::find_or_fail(db(), id)
+        .await
+        .map_err(|e| RavelError::not_found(e.to_string()))?;
+
+    Ok(axum::Json(serde_json::json!({ "post": post })))
 }
 ```
 
-### Create & Store
+### Create form
 
 ```rust
 pub async fn create() -> impl IntoResponse {
-    if Auth::guest() { return redirect("/login"); }
-    "Create Post form"
+    if Auth::guest() {
+        return redirect("/login");
+    }
+    "Create Post form" // render template in practice
 }
+```
 
+### Store (insert)
+
+```rust
 #[derive(Debug, Deserialize)]
-pub struct StorePostRequest { pub title: String, pub body: String }
+pub struct StorePostRequest {
+    pub title: String,
+    pub body: String,
+}
 
 impl FormRequest for StorePostRequest {
     fn rules() -> Vec<FieldRule> {
-        vec![FieldRule::new("title", vec![Rule::Required, Rule::Min(3)]),
-             FieldRule::new("body", vec![Rule::Required, Rule::Min(10)])]
+        vec![
+            FieldRule::new("title", vec![Rule::Required, Rule::Min(3)]),
+            FieldRule::new("body", vec![Rule::Required, Rule::Min(10)]),
+        ]
     }
 }
 
@@ -209,74 +350,167 @@ pub async fn store(
     Validated(req): Validated<StorePostRequest>,
 ) -> Result<impl IntoResponse, RavelError> {
     let uid: i32 = Auth::id().ok_or(RavelError::unauthorized("Not logged in"))?;
-    Post::create(serde_json::json!({"title":req.title,"body":req.body,"user_id":uid}), &db())
-        .await.map_err(|e| RavelError::internal(e.to_string()))?;
+
+    // Eloquent: create from JSON
+    Post::create(
+        serde_json::json!({"title": req.title, "body": req.body, "user_id": uid}),
+        db(),
+    )
+    .await
+    .map_err(|e| RavelError::internal(e.to_string()))?;
+
     Session::flash("status", "Post created!");
     Ok(redirect("/posts"))
 }
 ```
 
-### Edit & Update
+### Edit form
 
 ```rust
 pub async fn edit(Path(id): Path<i32>) -> Result<impl IntoResponse, RavelError> {
-    if Auth::guest() { return Ok(redirect("/login")); }
-    let post = find_one::<Post>(&Post::r#where("id", id).to_select_sql()).await
-        .ok_or(RavelError::not_found("Post not found"))?;
-    if !post.owned_by(Auth::id::<i32>().unwrap()) {
-        return Err(RavelError::forbidden("Not your post"));
+    if Auth::guest() {
+        return Ok(redirect("/login"));
     }
-    Ok(axum::Json(serde_json::json!({ "post": post })))
-}
 
-pub async fn update(Path(id): Path<i32>, Validated(req): Validated<StorePostRequest>,
-) -> Result<impl IntoResponse, RavelError> {
-    let mut post = find_one::<Post>(&Post::r#where("id", id).to_select_sql()).await
-        .ok_or(RavelError::not_found("Post not found"))?;
-    if !post.owned_by(Auth::id::<i32>().unwrap()) {
+    let post = Post::find_or_fail(db(), id)
+        .await
+        .map_err(|e| RavelError::not_found(e.to_string()))?;
+
+    if !post.owned_by(Auth::id::<i32>().unwrap_or(0)) {
         return Err(RavelError::forbidden("Not your post"));
     }
-    post.update(serde_json::json!({"title":req.title,"body":req.body}), &db()).await
+
+    // to_public() strips hidden fields — safe for API responses
+    Ok(axum::Json(serde_json::json!({ "post": post.to_public() })))
+}
+```
+
+### Update
+
+```rust
+pub async fn update(
+    Path(id): Path<i32>,
+    Validated(req): Validated<StorePostRequest>,
+) -> Result<impl IntoResponse, RavelError> {
+    let post = Post::find_or_fail(db(), id)
+        .await
+        .map_err(|e| RavelError::not_found(e.to_string()))?;
+
+    if !post.owned_by(Auth::id::<i32>().unwrap_or(0)) {
+        return Err(RavelError::forbidden("Not your post"));
+    }
+
+    // Eloquent: chain set_xxx() + save()
+    post.set_title(req.title)
+        .set_body(req.body)
+        .save(db())
+        .await
         .map_err(|e| RavelError::internal(e.to_string()))?;
+
     Session::flash("status", "Post updated!");
     Ok(redirect("/posts"))
 }
 ```
 
+Key change from v1: no more `post.update(json)` with raw SQL — the `save()` method auto-detects INSERT vs UPDATE based on whether `id` is zero.
+
 ### Delete
 
 ```rust
 pub async fn destroy(Path(id): Path<i32>) -> Result<impl IntoResponse, RavelError> {
-    let post = find_one::<Post>(&Post::r#where("id", id).to_select_sql()).await
-        .ok_or(RavelError::not_found("Post not found"))?;
-    if !post.owned_by(Auth::id::<i32>().unwrap()) {
+    let post = Post::find_or_fail(db(), id)
+        .await
+        .map_err(|e| RavelError::not_found(e.to_string()))?;
+
+    if !post.owned_by(Auth::id::<i32>().unwrap_or(0)) {
         return Err(RavelError::forbidden("Not your post"));
     }
-    post.delete(&db()).await.map_err(|e| RavelError::internal(e.to_string()))?;
+
+    // Eloquent: consumptive delete (post is consumed)
+    post.delete(db())
+        .await
+        .map_err(|e| RavelError::internal(e.to_string()))?;
+
     Session::flash("status", "Post deleted!");
     Ok(redirect("/posts"))
 }
-```
 
-### Relation
-
-```rust
-use ravel_eloquent::relations::RelationBuilder;
-// All posts by user: RelationBuilder::<Post>::has_many("posts", "user_id", uid).to_sql()
-
-use ravel_eloquent::HasRelations;
-let sql = user.has_many::<Post>("posts", "user_id", user.id.into()).to_sql();
+// Alternative — delete without loading the instance first:
+// Post::delete_by_id(db(), id).await?;
 ```
 
 ---
 
-## 6. Auth Guards
+## 7. Relationships
+
+With v2, relationship methods are generated automatically by `#[derive(Model)]`.
+Add relation fields to your models to enable lazy-loaded relationship queries.
+
+```rust
+// On the User model, add:
+#[derive(Debug, Clone, Model, Serialize, Deserialize)]
+#[model(table = "users", timestamps)]
+pub struct User {
+    #[model(id)]       pub id: i32,
+    pub name: String,
+    #[model(string, 254, unique)] pub email: String,
+    #[model(hidden)]   pub password: String,
+
+    // Each user has many posts
+    #[model(has_many)]
+    pub posts: HasMany<Post>,
+}
+
+// On the Post model, add:
+#[derive(Debug, Clone, Model, Serialize, Deserialize)]
+#[model(table = "posts", timestamps)]
+pub struct Post {
+    #[model(id)]       pub id: i32,
+    pub title: String,
+    #[model(text)]     pub body: String,
+    #[model(integer)]  pub user_id: i32,
+
+    // Each post belongs to a user
+    #[model(belongs_to, from = "user_id", to = "id")]
+    pub author: HasOne<User>,
+}
+```
+
+### Lazy-loading related records
+
+```rust
+// ── Get all posts by a user ──
+let user = User::find_or_fail(db(), 1).await?;
+
+// user.posts() returns RelationQuery<Post> — supports filter, order, limit, paginate
+let posts = user.posts()
+    .filter(PostColumn::UserId, user.id)
+    .order_by_desc(PostColumn::CreatedAt)
+    .limit(10)
+    .get(db())
+    .await?;
+
+// ── Get the author of a post ──
+let post = Post::find_or_fail(db(), 5).await?;
+let author = post.author().first(db()).await?;
+
+// ── Count related records ──
+let post_count = user.posts().count(db()).await?;
+let has_posts = user.posts().exists(db()).await?;
+```
+
+---
+
+## 8. Auth Guards
 
 ### Per-Handler
 
 ```rust
 pub async fn dashboard() -> impl IntoResponse {
-    if Auth::guest() { Session::flash("status","Please log in."); return redirect("/login"); }
+    if Auth::guest() {
+        Session::flash("status", "Please log in.");
+        return redirect("/login");
+    }
     format!("Welcome, user {}!", Auth::id::<i32>().unwrap_or(0))
 }
 ```
@@ -285,20 +519,23 @@ pub async fn dashboard() -> impl IntoResponse {
 
 ```rust
 use ravel_http::auth::AuthGuard;
-Route::group("/admin", || { Route::get("/dashboard", dashboard); });
-Route::middleware(AuthGuard::middleware()); // protects subsequent routes (401 on missing cookie)
+
+Route::group("/admin", || {
+    Route::get("/dashboard", dashboard);
+});
+Route::middleware(AuthGuard::middleware()); // 401 if no session cookie
 ```
 
 ### Flash Messages
 
 ```rust
 Session::flash("status", "Done!");                      // write (next request)
-let msg: Option<String> = Session::flashed("status");  // read-once
+let msg: Option<String> = Session::flashed("status");  // read once
 ```
 
 ---
 
-## 7. Logout
+## 9. Logout
 
 ```rust
 pub async fn logout() -> impl IntoResponse {
@@ -306,12 +543,12 @@ pub async fn logout() -> impl IntoResponse {
     Session::flash("status", "Logged out.");
     redirect("/")
 }
-// Register as POST: Route::post("/logout", handlers::auth::logout);
+// Register: Route::post("/logout", handlers::auth::logout);
 ```
 
 ---
 
-## 8. Full Router Setup
+## 10. Full Router Setup
 
 `bootstrap/app.rs`:
 
@@ -320,6 +557,8 @@ use ravel_core::app::{Application, ServiceProvider};
 use ravel_core::container::Container;
 use ravel_facades::Route;
 use ravel_http::auth::AuthGuard;
+
+use crate::providers::database::DatabaseServiceProvider;
 
 pub struct RouteServiceProvider;
 
@@ -330,6 +569,7 @@ impl ServiceProvider for RouteServiceProvider {
         Route::post("/register", handlers::auth::register);
         Route::get("/login", handlers::auth::login_form);
         Route::post("/login", handlers::auth::login);
+
         Route::group("/posts", || {
             Route::get("/", handlers::posts::index);
             Route::get("/create", handlers::posts::create);
@@ -339,10 +579,12 @@ impl ServiceProvider for RouteServiceProvider {
             Route::put("/{id}", handlers::posts::update);
             Route::delete("/{id}", handlers::posts::destroy);
         });
+
         Route::middleware(AuthGuard::middleware());
         Route::post("/logout", handlers::auth::logout);
         Ok(())
     }
+
     fn name(&self) -> &str { "RouteServiceProvider" }
 }
 
@@ -351,6 +593,7 @@ pub fn create_app() {
         .load_env(".").expect("load env")
         .load_config("config").expect("load config")
         .with_cache()
+        .register_provider(DatabaseServiceProvider)
         .register_provider(RouteServiceProvider)
         .boot().expect("boot");
 }
@@ -376,22 +619,29 @@ async fn main() -> anyhow::Result<()> {
 
 ### Boot Sequence
 
-`Application::new()` → `.load_env()` → `.load_config()` → `.with_cache()` → `.register_provider()` → `.boot()` calls `register()` then `boot()` on all providers, freezes the container, stores global `APP` → `Route::build()` extracts the `Router` → `ravel_http::server::serve()` starts listening.
+`Application::new()` → `.load_env()` → `.load_config()` → `.with_cache()` →
+`.register_provider(DatabaseServiceProvider)` → `.register_provider(RouteServiceProvider)` →
+`.boot()` → `Route::build()` → `ravel_http::server::serve()`.
 
 ---
 
 ## Summary
 
-| Concept | API |
-|---------|------|
+| Concept | v2 API |
+|---------|--------|
+| Model | `#[derive(Model)]`, `#[model(table = "...", timestamps)]` |
+| Static find | `User::find(db, id)`, `User::find_or_fail(db, id)` |
+| Query | `User::query().filter(col, val).order_by_desc(col).limit(10).get(db)` |
+| Create | `User::create(serde_json::json!({...}), db)` |
+| Save | `user.set_name("Bob").save(db)` (id==0 INSERT, else UPDATE) |
+| Delete | `user.delete(db)` (consumptive), `Post::delete_by_id(db, id)` (static) |
+| Relations | `user.posts().filter(...).order_by_desc(...).get(db)` |
+| Public JSON | `post.to_public()` / `post.to_public_json()` (hidden fields excluded) |
 | Routing | `Route::get/post/put/delete()`, `Route::group()` |
 | Validation | `FormRequest` trait, `Validated<T>`, `Rule::Required/Email/Min` |
 | Hashing | `Hash::make()`, `Hash::check()` |
-| Authentication | `Auth::check/guest/login/logout/id()` |
+| Auth | `Auth::check/guest/login/logout/id()` |
 | Sessions | `Session::flash/flashed/get/put()` |
-| Models | `#[derive(Model)]`, `User::query()`, `User::r#where()`, `Post::create/update/delete()` |
-| Relations | `RelationBuilder::has_many()`, `HasRelations` |
-| Config | `Config::get()`, `Config::get_or()` |
-| Responses | `redirect()`, `back()`, `RavelError` |
+| Responses | `redirect()`, `RavelError`, `axum::Json` |
 | Middleware | `Route::middleware()`, `AuthGuard::middleware()` |
-| Boot | `Application::new()`, `.load_config()`, `.register_provider()`, `.boot()`, `Route::build()`, `ravel_http::server::serve()` |
+| Boot | `Application::new()`, `.register_provider()`, `.boot()`, `Route::build()` |

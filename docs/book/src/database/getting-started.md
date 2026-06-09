@@ -1,6 +1,8 @@
 # Database: Getting Started
 
-Ravel's database layer is built on **SeaORM** and supports PostgreSQL, MySQL, and SQLite. Connections are managed through `ConnectionManager` from `ravel-db-seaorm`, with lazy pooling and multi-connection support.
+Ravel's database layer is built on **SeaORM 2.0** and supports PostgreSQL, MySQL, and SQLite. Connections are managed through `ConnectionManager` from `ravel-db-seaorm`, with lazy pooling and multi-connection support.
+
+On top of SeaORM sits **ravel-eloquent**, an Active Record ORM modelled after Laravel Eloquent. Use `#[derive(Model)]` for zero-boilerplate entities with `save()`, `delete()`, fluent `QueryBuilder`, and lazy-loading relationships. See the [Eloquent ORM](./eloquent.md) guide for the full API.
 
 ## Configuration
 

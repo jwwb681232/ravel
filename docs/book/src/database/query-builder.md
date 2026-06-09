@@ -1,6 +1,13 @@
 # Query Builder
 
-Ravel uses **SeaORM** as its query builder. SeaORM provides a fluent, type-safe API for constructing SQL queries in Rust. This guide covers the essential CRUD operations.
+Ravel offers **two layers** for database access:
+
+| Layer | Use when |
+|-------|----------|
+| **ravel-eloquent** `QueryBuilder` | You want fluent, Laravel-style queries with `#[derive(Model)]`. See [Eloquent ORM](./eloquent.md). |
+| **Raw SeaORM** (this page) | You need full control, complex joins, subqueries, or aren't using `#[derive(Model)]`. |
+
+This guide covers the SeaORM layer — useful as an escape hatch when the Eloquent `QueryBuilder` doesn't cover your use case.
 
 ## Defining an Entity
 
