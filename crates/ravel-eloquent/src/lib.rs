@@ -16,6 +16,9 @@
 //! }
 //! ```
 
+pub mod error;
+pub use error::{RavelEloquentError, Result};
+
 mod query;
 mod relations;
 

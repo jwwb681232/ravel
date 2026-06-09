@@ -2,6 +2,7 @@
 //!
 //! Generates SQL strings and executes them via SeaORM's raw query API.
 
+use crate::error::{RavelEloquentError, Result};
 use sea_orm::{ConnectionTrait, DatabaseConnection, Statement, Value};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -135,7 +136,7 @@ impl<T> ModelQuery<T> {
     // ── Execution ───────────────────────────────────────────────────
 
     /// Execute SELECT and return matching rows.
-    pub async fn get(self, db: &DatabaseConnection) -> anyhow::Result<Vec<T>>
+    pub async fn get(self, db: &DatabaseConnection) -> Result<Vec<T>>
     where
         T: DeserializeOwned + ModelMeta,
     {
@@ -148,7 +149,7 @@ impl<T> ModelQuery<T> {
     }
 
     /// Execute SELECT and return the first matching row.
-    pub async fn first(self, db: &DatabaseConnection) -> anyhow::Result<Option<T>>
+    pub async fn first(self, db: &DatabaseConnection) -> Result<Option<T>>
     where
         T: DeserializeOwned + ModelMeta,
     {
@@ -156,7 +157,7 @@ impl<T> ModelQuery<T> {
     }
 
     /// Execute COUNT and return matching row count.
-    pub async fn count(self, db: &DatabaseConnection) -> anyhow::Result<u64> {
+    pub async fn count(self, db: &DatabaseConnection) -> Result<u64> {
         let sql = self.to_count_sql();
         let rows = db
             .query_all_raw(Statement::from_string(db.get_database_backend(), sql))
@@ -170,7 +171,7 @@ impl<T> ModelQuery<T> {
     }
 
     /// Check whether any matching rows exist.
-    pub async fn exists(self, db: &DatabaseConnection) -> anyhow::Result<bool> {
+    pub async fn exists(self, db: &DatabaseConnection) -> Result<bool> {
         Ok(self.count(db).await? > 0)
     }
 
@@ -180,7 +181,7 @@ impl<T> ModelQuery<T> {
         db: &DatabaseConnection,
         page: u64,
         per_page: u64,
-    ) -> anyhow::Result<Page<T>>
+    ) -> Result<Page<T>>
     where
         T: DeserializeOwned + ModelMeta,
     {
@@ -191,7 +192,7 @@ impl<T> ModelQuery<T> {
     }
 
     /// Execute DELETE and return rows affected.
-    pub async fn delete(self, db: &DatabaseConnection) -> anyhow::Result<u64> {
+    pub async fn delete(self, db: &DatabaseConnection) -> Result<u64> {
         let sql = self.to_delete_sql();
         let result = db.execute_unprepared(&sql).await?;
         Ok(result.rows_affected())
@@ -212,7 +213,7 @@ pub type Page<T> = ravel_db_core::pagination::Page<T>;
 
 #[async_trait::async_trait]
 pub trait ModelExt: DeserializeOwned + Serialize + Send + Sync + ModelMeta + 'static {
-    async fn create(data: serde_json::Value, db: &DatabaseConnection) -> anyhow::Result<Self>
+    async fn create(data: serde_json::Value, db: &DatabaseConnection) -> Result<Self>
     where
         Self: Sized;
 
@@ -220,38 +221,43 @@ pub trait ModelExt: DeserializeOwned + Serialize + Send + Sync + ModelMeta + 'st
         db: &DatabaseConnection,
         id: impl Into<Value> + Send,
         data: serde_json::Value,
-    ) -> anyhow::Result<()>
+    ) -> Result<()>
     where
         Self: Sized;
 
     async fn delete_by_id(
         db: &DatabaseConnection,
         id: impl Into<Value> + Send,
-    ) -> anyhow::Result<()>
+    ) -> Result<()>
     where
         Self: Sized;
 
     async fn find(
         db: &DatabaseConnection,
         id: impl Into<Value> + Send,
-    ) -> anyhow::Result<Option<Self>>
+    ) -> Result<Option<Self>>
     where
         Self: Sized;
 
-    async fn all(db: &DatabaseConnection) -> anyhow::Result<Vec<Self>>
+    async fn all(db: &DatabaseConnection) -> Result<Vec<Self>>
     where
         Self: Sized;
 
     async fn find_or_fail(
         db: &DatabaseConnection,
         id: impl Into<Value> + Send,
-    ) -> anyhow::Result<Self>
+    ) -> Result<Self>
     where
         Self: Sized,
     {
-        Self::find(db, id)
+        let id_val: sea_orm::Value = id.into();
+        let id_str = format!("{:?}", id_val);
+        Self::find(db, id_val)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("Record not found"))
+            .ok_or_else(|| RavelEloquentError::RecordNotFound {
+                table: Self::table_name(),
+                id: id_str,
+            })
     }
 }
 
@@ -263,7 +269,7 @@ pub mod defaults {
     pub async fn create<T: ModelMeta + DeserializeOwned>(
         data: serde_json::Value,
         db: &DatabaseConnection,
-    ) -> anyhow::Result<T> {
+    ) -> Result<T> {
         let cols: Vec<_> = T::columns().iter().map(|c| format!("\"{}\"", c)).collect();
         let vals: Vec<_> = T::columns()
             .iter()
@@ -288,21 +294,23 @@ pub mod defaults {
             &rows
                 .into_iter()
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("INSERT returned no rows"))?,
+                .ok_or_else(|| {
+                    RavelEloquentError::Other("INSERT returned no rows".into())
+                })?,
             T::columns(),
         )
     }
 
     pub async fn all<T: ModelMeta + DeserializeOwned>(
         db: &DatabaseConnection,
-    ) -> anyhow::Result<Vec<T>> {
+    ) -> Result<Vec<T>> {
         ModelQuery::<T>::new().table(T::table_name()).get(db).await
     }
 
     pub async fn find<T: ModelMeta + DeserializeOwned>(
         db: &DatabaseConnection,
         id: impl Into<Value> + Send,
-    ) -> anyhow::Result<Option<T>> {
+    ) -> Result<Option<T>> {
         ModelQuery::<T>::new()
             .table(T::table_name())
             .r#where(T::id_column(), id)
@@ -314,7 +322,7 @@ pub mod defaults {
         db: &DatabaseConnection,
         id: impl Into<Value> + Send,
         data: serde_json::Value,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let sets: Vec<_> = T::columns()
             .iter()
             .filter(|c| data.get(*c).is_some())
@@ -340,7 +348,7 @@ pub mod defaults {
     pub async fn delete_by_id<T: ModelMeta>(
         db: &DatabaseConnection,
         id: impl Into<Value> + Send,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let sql = format!(
             "DELETE FROM \"{}\" WHERE \"{}\" = {}",
             T::table_name(),
@@ -389,7 +397,7 @@ fn quote_json(v: &serde_json::Value) -> String {
 pub(crate) fn row_to_model<T: DeserializeOwned>(
     row: &sea_orm::QueryResult,
     cols: &[&str],
-) -> anyhow::Result<T> {
+) -> Result<T> {
     let mut map = serde_json::Map::new();
     for (i, col) in cols.iter().enumerate() {
         let val = try_extract(row, i);
