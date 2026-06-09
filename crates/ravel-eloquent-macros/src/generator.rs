@@ -28,7 +28,7 @@ pub fn generate(input: &syn::DeriveInput) -> Result<TokenStream, syn::Error> {
         .iter()
         .map(|c| {
             let variant = format_ident!("{}", c.field_name);
-            let name = &c.field_name;
+            let name = &c.column_name;
             quote! { Self::#variant => #name }
         })
         .collect();
@@ -60,11 +60,11 @@ pub fn generate(input: &syn::DeriveInput) -> Result<TokenStream, syn::Error> {
         .fields
         .iter()
         .find(|c| c.is_primary_key)
-        .map(|c| c.field_name.clone())
+        .map(|c| c.column_name.clone())
         .unwrap_or_else(|| "id".to_string());
 
     // Column name literals for ModelMeta
-    let column_name_literals: Vec<_> = attrs.fields.iter().map(|c| &c.field_name).collect();
+    let column_name_literals: Vec<_> = attrs.fields.iter().map(|c| &c.column_name).collect();
 
     let table_name_lit = &attrs.table_name;
     let id_name_lit = &id_field_name;
