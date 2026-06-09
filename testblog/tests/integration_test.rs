@@ -1,9 +1,10 @@
 //! Integration tests using ravel-facades.
 use anyhow::Result;
 use axum::http::StatusCode;
-use ravel_core::app::{Application, ServiceProvider};
+use ravel_core::app::{Application, ServiceProvider, reset_app, set_app_global};
 use ravel_core::container::Container;
 use ravel_facades::Route;
+use std::sync::Arc;
 use std::sync::Mutex;
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -27,17 +28,19 @@ impl ServiceProvider for TestRouteProvider {
     }
 }
 
-fn create_test_app() {
+fn create_test_app() -> Arc<Application> {
     Route::reset();
-    ravel_core::app::APP.reset();
-    Application::new()
+    reset_app();
+    let app = Application::new()
         .register_provider(TestRouteProvider)
         .boot()
         .expect("Failed to boot test application");
+    set_app_global(app.clone());
+    app
 }
 
 fn test_router() -> axum::Router {
-    create_test_app();
+    let _app = create_test_app(); // keep Arc alive until router is built
     Route::build()
 }
 
@@ -47,34 +50,33 @@ fn test_router() -> axum::Router {
 fn test_app_boots_successfully() {
     let _l = lock();
     Route::reset();
-    ravel_core::app::APP.reset();
-    Application::new()
+    reset_app();
+    let app = Application::new()
         .register_provider(TestRouteProvider)
         .boot()
         .unwrap();
-    let app = ravel_core::app::APP.get().unwrap();
     assert!(app.is_booted());
 }
 
 #[test]
 fn test_app_is_booted_after_boot() {
     let _l = lock();
-    ravel_core::app::APP.reset();
-    create_test_app();
-    let app = ravel_core::app::APP.get().unwrap();
+    reset_app();
+    let _app = create_test_app();
+    // create_test_app already calls set_app_global
+    let app = ravel_core::app::app().unwrap();
     assert!(app.is_booted());
 }
 
 #[test]
 fn test_app_config_loaded() {
     let _l = lock();
-    ravel_core::app::APP.reset();
-    Application::new()
+    reset_app();
+    let app = Application::new()
         .load_config("nonexistent-dir")
         .unwrap()
         .boot()
         .unwrap();
-    let app = ravel_core::app::APP.get().unwrap();
     assert!(app.config().is_empty() || !app.config().is_empty());
 }
 

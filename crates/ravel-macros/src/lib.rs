@@ -95,3 +95,107 @@ fn camel_to_snake(s: &str) -> String {
     }
     out
 }
+
+// ── #[ravel::test] ─────────────────────────────────────────────────────
+
+/// Attribute macro that replaces `#[test]` with automatic Ravel application
+/// lifecycle management.
+///
+/// Each test gets a fresh `Application::new().boot()` wrapped in
+/// `with_app()` — no manual resets or global locks needed.
+/// or `BOOT_LOCK` needed.
+///
+/// # Sync test
+///
+/// ```rust,ignore
+/// #[ravel::test]
+/// fn test_config() {
+///     let val: Option<String> = Config::get("key");
+///     assert_eq!(val, None);
+/// }
+/// ```
+///
+/// # Async test
+///
+/// ```rust,ignore
+/// #[ravel::test]
+/// async fn test_request() {
+///     let client = TestClient::new(Route::build());
+///     let resp = client.get("/").await;
+///     resp.assert_ok();
+/// }
+/// ```
+///
+/// # Custom application
+///
+/// ```rust,ignore
+/// #[ravel::test(app = my_app)]
+/// fn test_cache() {
+///     Cache::put("k", "v", None);
+/// }
+///
+/// fn my_app() -> ravel_core::app::Application {
+///     ravel_core::app::Application::new().with_cache()
+/// }
+/// ```
+struct TestMacroArgs {
+    app_factory: Option<proc_macro2::TokenStream>,
+}
+
+impl syn::parse::Parse for TestMacroArgs {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let mut app_factory = None;
+
+        // Parse comma-separated meta items: `app = "path"`
+        let metas = syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input)?;
+        for meta in &metas {
+            if let syn::Meta::NameValue(nv) = meta {
+                if nv.path.is_ident("app") {
+                    if let syn::Expr::Lit(expr_lit) = &nv.value {
+                        if let syn::Lit::Str(lit) = &expr_lit.lit {
+                            let path: syn::Path =
+                                lit.parse().expect("invalid path in `app = \"...\"`");
+                            app_factory = Some(quote! { #path() });
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(TestMacroArgs { app_factory })
+    }
+}
+
+#[proc_macro_attribute]
+pub fn test(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as syn::ItemFn);
+    let args = parse_macro_input!(attr as TestMacroArgs);
+
+    let fn_name = &input.sig.ident;
+    let fn_block = &input.block;
+    let fn_vis = &input.vis;
+    let fn_attrs: Vec<_> = input
+        .attrs
+        .iter()
+        .filter(|a| !a.path().is_ident("test"))
+        .collect();
+
+    let app_expr = args.app_factory.unwrap_or_else(|| {
+        quote! { ravel_core::app::Application::new() }
+    });
+
+    // All tests become async — task-local APP requires a tokio context.
+    let output = quote! {
+        #fn_vis #[tokio::test]
+        #(#fn_attrs)*
+        async fn #fn_name() {
+            ravel_facades::Route::reset();
+            let app = #app_expr.boot().expect("Failed to boot Ravel application");
+            ravel_core::app::with_app(app, async move {
+                #fn_block
+            }).await;
+        }
+    };
+
+    output.into()
+}

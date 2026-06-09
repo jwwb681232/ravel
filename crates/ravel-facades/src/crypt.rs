@@ -1,13 +1,13 @@
 //! Crypt facade — AES-256-GCM encryption.
 use anyhow::Result;
-use ravel_core::app::APP;
+use ravel_core::app::app;
 use ravel_core::crypt::Crypt as CryptEngine;
 
 pub struct Crypt;
 
 impl Crypt {
     fn engine() -> std::sync::Arc<CryptEngine> {
-        let app = APP.get().expect("Application not booted");
+        let app = app().expect("Application not booted");
         app.container()
             .resolve::<CryptEngine>()
             .expect("Crypt not registered — call Application::with_app_key(key) before boot")

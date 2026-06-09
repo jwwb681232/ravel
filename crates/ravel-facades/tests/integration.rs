@@ -1,13 +1,14 @@
 use anyhow::Result;
 use ravel_core::app::Application;
 use ravel_core::app::ServiceProvider;
+use ravel_core::app::{reset_app, set_app_global};
 use ravel_core::container::Container;
 use ravel_facades::response;
 use ravel_facades::{Cache, Config, Hash, Route, env, env_or, now, redirect};
 use std::sync::Mutex;
 use std::time::Duration;
 
-/// Serialize tests that share the global APP singleton.
+/// Serialize tests that share the Route registry.
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 fn lock() -> std::sync::MutexGuard<'static, ()> {
@@ -33,11 +34,12 @@ impl ServiceProvider for TestProvider {
 fn test_config_get_after_boot() {
     let _l = lock();
     Route::reset();
-    ravel_core::app::APP.reset();
-    Application::new()
+    reset_app();
+    let app = Application::new()
         .register_provider(TestProvider)
         .boot()
         .unwrap();
+    set_app_global(app);
 
     let val: Option<String> = Config::get("nonexistent.key");
     assert_eq!(val, None);
@@ -47,11 +49,12 @@ fn test_config_get_after_boot() {
 fn test_config_get_or_with_default() {
     let _l = lock();
     Route::reset();
-    ravel_core::app::APP.reset();
-    Application::new()
+    reset_app();
+    let app = Application::new()
         .register_provider(TestProvider)
         .boot()
         .unwrap();
+    set_app_global(app);
 
     let val = Config::get_or("nonexistent", 42u16);
     assert_eq!(val, 42);
@@ -63,12 +66,13 @@ fn test_config_get_or_with_default() {
 fn test_cache_put_and_get() {
     let _l = lock();
     Route::reset();
-    ravel_core::app::APP.reset();
-    Application::new()
+    reset_app();
+    let app = Application::new()
         .with_cache()
         .register_provider(TestProvider)
         .boot()
         .unwrap();
+    set_app_global(app);
 
     Cache::put(
         "test_key",
@@ -83,12 +87,13 @@ fn test_cache_put_and_get() {
 fn test_cache_miss() {
     let _l = lock();
     Route::reset();
-    ravel_core::app::APP.reset();
-    Application::new()
+    reset_app();
+    let app = Application::new()
         .with_cache()
         .register_provider(TestProvider)
         .boot()
         .unwrap();
+    set_app_global(app);
 
     let val: Option<String> = Cache::get("nonexistent_key");
     assert_eq!(val, None);
@@ -98,12 +103,13 @@ fn test_cache_miss() {
 fn test_cache_has_and_forget() {
     let _l = lock();
     Route::reset();
-    ravel_core::app::APP.reset();
-    Application::new()
+    reset_app();
+    let app = Application::new()
         .with_cache()
         .register_provider(TestProvider)
         .boot()
         .unwrap();
+    set_app_global(app);
 
     assert!(!Cache::has("forget_me"));
     Cache::put("forget_me", 42u32, None);
@@ -117,8 +123,9 @@ fn test_cache_has_and_forget() {
 #[test]
 fn test_hash_make_and_check() {
     let _l = lock();
-    ravel_core::app::APP.reset();
-    Application::new().boot().unwrap();
+    reset_app();
+    let app = Application::new().boot().unwrap();
+    set_app_global(app);
 
     let hashed = Hash::make("secret123").unwrap();
     assert!(Hash::check("secret123", &hashed).unwrap());
@@ -130,13 +137,14 @@ fn test_hash_make_and_check() {
 #[test]
 fn test_route_facade_builds_router() {
     let _l = lock();
-    ravel_core::app::APP.reset();
+    reset_app();
     Route::reset();
 
-    Application::new()
+    let app = Application::new()
         .register_provider(TestProvider)
         .boot()
         .unwrap();
+    set_app_global(app);
 
     let router = Route::build();
     assert!(!format!("{:?}", router).is_empty());
@@ -222,8 +230,9 @@ fn test_collection_implode() {
 #[should_panic(expected = "MemoryCache not registered")]
 fn test_cache_panics_without_with_cache() {
     let _l = lock();
-    ravel_core::app::APP.reset();
-    Application::new().boot().unwrap();
+    reset_app();
+    let app = Application::new().boot().unwrap();
+    set_app_global(app);
     Cache::put("key", "val".to_string(), None);
 }
 
@@ -231,6 +240,6 @@ fn test_cache_panics_without_with_cache() {
 #[should_panic(expected = "Application not booted")]
 fn test_facades_panic_before_boot() {
     let _l = lock();
-    ravel_core::app::APP.reset();
+    reset_app();
     Config::get::<String>("any.key");
 }

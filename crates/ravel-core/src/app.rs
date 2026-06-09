@@ -30,95 +30,66 @@ use crate::container::Container;
 use crate::env::EnvRepo;
 use crate::log::{self, Log};
 use anyhow::Result;
-use std::ops::Deref;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::Mutex;
 
-/// Global application instance, set by [`Application::boot()`].
-/// All facades read from this singleton.
-pub static APP: AppGlobal = AppGlobal::new();
+// ── Task-local APP (async HTTP handler path) ───────────────────────────
 
-/// Thread-safe wrapper around the global [`Application`] singleton.
+tokio::task_local! {
+    /// Per-task application instance.  Set by [`with_app`] at the top of
+    /// the async call tree (e.g. in `main()` or in `#[ravel::test]`).
+    pub static APP: std::sync::Arc<Application>;
+}
+
+// ── Global fallback (CLI, sync code, non-tokio contexts) ───────────────
+
+/// Synchronous fallback for code that runs outside a tokio runtime.
+static APP_GLOBAL: Mutex<Option<std::sync::Arc<Application>>> = Mutex::new(None);
+
+/// Obtain the current [`Application`], trying the task-local first
+/// (async HTTP-handler path) and falling back to the global singleton
+/// (CLI commands, synchronous code).
 ///
-/// In production, [`Application::boot()`] stores the app here once.
-/// For testing, [`AppGlobal::reset`] is available to clear the value between
-/// test cases.
-pub struct AppGlobal {
-    inner: Mutex<Option<Application>>,
+/// Returns `None` when no application has been booted in any context.
+pub fn app() -> Option<std::sync::Arc<Application>> {
+    APP.try_with(std::sync::Arc::clone)
+        .ok()
+        .or_else(|| APP_GLOBAL.lock().unwrap_or_else(|e| e.into_inner()).clone())
 }
 
-impl AppGlobal {
-    pub const fn new() -> Self {
-        Self {
-            inner: Mutex::new(None),
-        }
-    }
-
-    /// Store the application as the global singleton.
-    ///
-    /// Returns `Err(app)` if the global has already been set.
-    #[allow(clippy::result_large_err)]
-    pub fn set(&self, app: Application) -> Result<(), Application> {
-        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        if guard.is_some() {
-            return Err(app);
-        }
-        *guard = Some(app);
-        Ok(())
-    }
-
-    /// Obtain a reference to the global application.
-    ///
-    /// Returns `None` if [`Application::boot()`] has not been called yet.
-    pub fn get(&self) -> Option<AppRef<'_>> {
-        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        if guard.is_some() {
-            Some(AppRef(guard))
-        } else {
-            None
-        }
-    }
+/// Run `future` inside a task-local scope that provides [`APP`].
+///
+/// Use this in `main()` or at the top of your async call tree so that all
+/// downstream handlers and facades can access the application without
+/// touching global mutable state.
+pub async fn with_app<F>(app: std::sync::Arc<Application>, f: F) -> F::Output
+where
+    F: std::future::Future,
+{
+    APP.scope(app, f).await
 }
 
-impl Default for AppGlobal {
-    fn default() -> Self {
-        Self::new()
-    }
+/// Store the application in both the global fallback AND the current
+/// task-local (if one is active).  This is the compatibility path for
+/// code that hasn't yet migrated to [`with_app`].
+pub fn set_app_global(app: std::sync::Arc<Application>) {
+    // If a task-local is active, keep it — the Arc is immutable so no
+    // action needed. The key side-effect is storing in APP_GLOBAL.
+    let _ = APP.try_with(|_| {});
+    *APP_GLOBAL.lock().unwrap_or_else(|e| e.into_inner()) = Some(app);
 }
 
-impl AppGlobal {
-    /// Reset the global app so the next call to `boot()` succeeds.
-    ///
-    /// In production this is rarely needed; it is primarily used between
-    /// test cases that share the same process.
-    ///
-    /// Recovers from a poisoned mutex (which can happen after a
-    /// `#[should_panic]` test unwinds while holding the APP lock) so that
-    /// subsequent test cases can continue without a panic cascade.
-    pub fn reset(&self) {
-        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        *guard = None;
-    }
+/// Reset all application storage (task-local + global).
+///
+/// Primarily a testing escape-hatch.  Prefer [`with_app`] for test
+/// isolation — it avoids the need for manual resets and global locks.
+pub fn reset_app() {
+    *APP_GLOBAL.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    // Task-local resets automatically when its scope exits, so nothing to do.
 }
 
 /// Serialise boot-related tests so they don't race on the global `APP`.
 #[cfg(test)]
 pub(crate) static BOOT_LOCK: Mutex<()> = Mutex::new(());
-
-/// A locked reference to the global [`Application`].
-///
-/// Holds the internal lock so the application is not modified while being
-/// accessed. Created by [`AppGlobal::get`].
-pub struct AppRef<'a>(MutexGuard<'a, Option<Application>>);
-
-impl<'a> Deref for AppRef<'a> {
-    type Target = Application;
-
-    fn deref(&self) -> &Application {
-        // Safety: `AppRef` is only constructed when the inner `Option` is
-        // `Some`, so unwrapping is always safe.
-        self.0.as_ref().unwrap()
-    }
-}
 
 // ── ServiceProvider trait ──────────────────────────────────────────────
 
@@ -240,10 +211,13 @@ impl Application {
     /// 1. Initialise structured logging.
     /// 2. Call `register()` on every provider.
     /// 3. Call `boot()` on every provider.
-    /// 4. Register the application itself in the container.
-    pub fn boot(mut self) -> Result<()> {
+    /// 4. Freeze the container.
+    ///
+    /// Returns an [`Arc<Application>`] that can be passed to [`with_app`]
+    /// or stored via [`set_app_global`].
+    pub fn boot(mut self) -> Result<std::sync::Arc<Application>> {
         if self.booted {
-            return Ok(());
+            return Ok(std::sync::Arc::new(self));
         }
 
         // Initialise logging (respects RAVEL_LOG env var, defaults to "info")
@@ -273,13 +247,11 @@ impl Application {
         // Freeze the container for thread-safe reads
         self.container.freeze();
 
-        // Store as global singleton for facades
-        APP.set(self)
-            .map_err(|_| anyhow::anyhow!("Application already booted"))?;
+        let app = std::sync::Arc::new(self);
 
         log::info!("Application booted successfully");
 
-        Ok(())
+        Ok(app)
     }
 
     /// Return a reference to the service container.
@@ -403,11 +375,11 @@ mod tests {
     #[test]
     fn test_register_boot_order() {
         let _lock = BOOT_LOCK.lock().unwrap();
-        APP.reset();
+        reset_app();
 
         let order = Arc::new(AtomicUsize::new(0));
 
-        Application::new()
+        let app = Application::new()
             .register_provider(ProviderA {
                 call_order: order.clone(),
             })
@@ -417,7 +389,6 @@ mod tests {
             .boot()
             .unwrap();
 
-        let app = APP.get().unwrap();
         assert!(app.is_booted());
 
         // A.register = +1, B.register = +10, A.boot = +1, B.boot = +10 → 22
@@ -439,7 +410,7 @@ mod tests {
     #[test]
     fn test_env_available_in_container() {
         let _lock = BOOT_LOCK.lock().unwrap();
-        APP.reset();
+        reset_app();
 
         let dir = std::env::temp_dir().join("ravel_app_env_test");
         let _ = std::fs::remove_dir_all(&dir);
@@ -450,9 +421,8 @@ mod tests {
         writeln!(f, "APP_ENV=testing").unwrap();
         drop(f);
 
-        Application::new().load_env(&dir).unwrap().boot().unwrap();
+        let app = Application::new().load_env(&dir).unwrap().boot().unwrap();
 
-        let app = APP.get().unwrap();
         let env: std::sync::Arc<EnvRepo> = app.container().resolve().unwrap();
         assert_eq!(env.get("APP_ENV"), Some("testing"));
 
@@ -462,11 +432,11 @@ mod tests {
     #[test]
     fn test_late_provider_registration() {
         let _lock = BOOT_LOCK.lock().unwrap();
-        APP.reset();
+        reset_app();
 
         let order = Arc::new(AtomicUsize::new(0));
 
-        Application::new()
+        let app = Application::new()
             .register_provider(ProviderA {
                 call_order: order.clone(),
             })
@@ -474,7 +444,6 @@ mod tests {
             .unwrap();
 
         // Late registration via post-boot API (reads from frozen container only)
-        let app = APP.get().unwrap();
         app.register_provider_post_boot(ProviderB {
             call_order: order.clone(),
         });

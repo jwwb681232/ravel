@@ -84,13 +84,18 @@ impl AuthGuard {
     + 'static {
         |req: axum::extract::Request, next: axum::middleware::Next| {
             Box::pin(async move {
-                let jar = crate::cookie::CookieJar::parse(
-                    req.headers()
-                        .get("cookie")
-                        .and_then(|v| v.to_str().ok())
-                        .unwrap_or(""),
-                );
-                if jar.get("ravel_session").is_none() {
+                // Check the shared session state for _auth_id (not just cookie existence)
+                let is_authenticated = req
+                    .extensions()
+                    .get::<std::sync::Arc<crate::session::SessionState>>()
+                    .is_some_and(|state| {
+                        state
+                            .data
+                            .lock()
+                            .is_ok_and(|guard| guard.values.contains_key("_auth_id"))
+                    });
+
+                if !is_authenticated {
                     return (
                         axum::http::StatusCode::UNAUTHORIZED,
                         axum::Json(serde_json::json!({
@@ -111,12 +116,15 @@ impl AuthGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::SessionData;
+    use crate::session::{SessionData, SessionState};
+    use std::sync::Arc;
 
     fn new_session() -> Session {
+        let state = Arc::new(SessionState::new(SessionData::default()));
         Session {
             data: SessionData::default(),
             dirty: false,
+            shared: state,
         }
     }
 

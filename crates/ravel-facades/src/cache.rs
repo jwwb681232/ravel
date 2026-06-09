@@ -1,5 +1,5 @@
 //! Cache facade — in-memory TTL cache.
-use ravel_core::app::APP;
+use ravel_core::app::app;
 use ravel_core::cache::Cache as CacheTrait;
 use std::time::Duration;
 
@@ -7,7 +7,7 @@ pub struct Cache;
 
 impl Cache {
     fn cache() -> std::sync::Arc<ravel_core::cache::MemoryCache> {
-        let app = APP.get().expect("Application not booted");
+        let app = app().expect("Application not booted");
         app.container()
             .resolve::<ravel_core::cache::MemoryCache>()
             .expect("MemoryCache not registered — call Application::with_cache() before boot")

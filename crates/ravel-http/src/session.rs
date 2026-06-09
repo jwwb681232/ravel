@@ -44,6 +44,40 @@ pub struct SessionData {
     pub(crate) flash_consumed: HashMap<String, serde_json::Value>,
 }
 
+// ── Shared session state (bridges facade + extractor paths) ─────────────
+
+/// Shared mutable session state for a single request.
+///
+/// Created by [`SessionService`] and stored in request extensions.
+/// Both the [`Session`] extractor and the facade `Session` / `Auth`
+/// read and write the same underlying data via this shared handle.
+#[derive(Debug, Default)]
+pub struct SessionState {
+    pub data: std::sync::Mutex<SessionData>,
+    pub dirty: std::sync::atomic::AtomicBool,
+}
+
+impl SessionState {
+    pub fn new(data: SessionData) -> Self {
+        Self {
+            data: std::sync::Mutex::new(data),
+            dirty: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Mark the session as modified (cookie will be re-written).
+    pub fn mark_dirty(&self) {
+        self.dirty
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Check and clear the dirty flag.
+    pub fn take_dirty(&self) -> bool {
+        self.dirty
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+    }
+}
+
 // ── SessionConfig ───────────────────────────────────────────────────────
 
 /// Configuration for the session middleware.
@@ -102,13 +136,10 @@ impl SessionConfig {
 
     fn write(&self, data: &SessionData) -> String {
         let encoded = self.crypt.encrypt_value(data).unwrap_or_default();
-        let mut cookie = format!(
+        format!(
             "{}={}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}",
             self.cookie_name, encoded, self.max_age_secs
-        );
-        // Mark secure in production (non-localhost)
-        cookie.push_str("; Secure");
-        cookie
+        )
     }
 }
 
@@ -163,18 +194,24 @@ where
         let mut inner = self.inner.clone();
 
         Box::pin(async move {
+            // 1. Read session from encrypted cookie
             let cookie_header = req.headers().get("cookie").and_then(|v| v.to_str().ok());
             let data = config.read(cookie_header);
-            let set_cookie = config.write(&data);
 
-            req.extensions_mut().insert(data);
+            // 2. Create shared state — this bridges the facade + extractor paths
+            let state = Arc::new(SessionState::new(data));
+            req.extensions_mut().insert(Arc::clone(&state));
 
+            // 3. Run the handler (and all downstream middleware)
             let mut resp = inner.call(req).await?;
 
-            // If session was modified, set the cookie
-            if let Some(_modified) = resp.extensions().get::<bool>() {
-                resp.headers_mut()
-                    .insert("Set-Cookie", set_cookie.parse().unwrap());
+            // 4. After handler: check if session was modified, write cookie
+            if state.take_dirty() {
+                let final_data = state.data.lock().unwrap_or_else(|e| e.into_inner());
+                let cookie = config.write(&final_data);
+                if let Ok(header_value) = cookie.parse() {
+                    resp.headers_mut().insert("Set-Cookie", header_value);
+                }
             }
 
             Ok(resp)
@@ -187,10 +224,26 @@ where
 /// Handler extractor for reading and writing session data.
 ///
 /// Must be used after [`SessionLayer`] is applied to the route.
+///
+/// Modifications are automatically written back to the shared
+/// [`SessionState`] on drop, so the [`SessionService`] middleware
+/// can persist them to the response cookie.
 #[derive(Debug)]
 pub struct Session {
     pub(crate) data: SessionData,
     pub(crate) dirty: bool,
+    pub(crate) shared: Arc<SessionState>,
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        if self.dirty {
+            if let Ok(mut guard) = self.shared.data.lock() {
+                *guard = self.data.clone();
+            }
+            self.shared.mark_dirty();
+        }
+    }
 }
 
 impl Session {
@@ -226,7 +279,6 @@ impl Session {
 
     /// Consume flash messages (called automatically after first read).
     pub fn flashed<T: serde::de::DeserializeOwned>(&mut self, key: &str) -> Option<T> {
-        // Move current flash to consumed, return the value
         if let Some(v) = self.data.flash.remove(key) {
             self.data.flash_consumed.insert(key.into(), v.clone());
             self.dirty = true;
@@ -250,12 +302,23 @@ impl<S: Send + Sync + 'static> FromRequestParts<S> for Session {
     type Rejection = std::convert::Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let data = parts
+        let shared = parts
             .extensions
-            .get::<SessionData>()
+            .get::<Arc<SessionState>>()
             .cloned()
             .unwrap_or_default();
-        Ok(Session { data, dirty: false })
+
+        let data = shared
+            .data
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+
+        Ok(Session {
+            data,
+            dirty: false,
+            shared,
+        })
     }
 }
 
@@ -292,9 +355,11 @@ mod tests {
 
     #[test]
     fn test_session_put_and_get() {
+        let state = Arc::new(SessionState::new(SessionData::default()));
         let mut session = Session {
             data: SessionData::default(),
             dirty: false,
+            shared: state,
         };
 
         session.put("name", "Alice");
@@ -307,9 +372,11 @@ mod tests {
 
     #[test]
     fn test_session_flash() {
+        let state = Arc::new(SessionState::new(SessionData::default()));
         let mut session = Session {
             data: SessionData::default(),
             dirty: false,
+            shared: state,
         };
 
         session.flash("success", "Operation completed");
@@ -324,9 +391,11 @@ mod tests {
 
     #[test]
     fn test_session_forget() {
+        let state = Arc::new(SessionState::new(SessionData::default()));
         let mut session = Session {
             data: SessionData::default(),
             dirty: false,
+            shared: state,
         };
 
         session.put("key", "value");
@@ -334,5 +403,27 @@ mod tests {
 
         session.forget("key");
         assert!(!session.has("key"));
+    }
+
+    #[test]
+    fn test_session_drop_writes_back_to_shared_state() {
+        let state = Arc::new(SessionState::new(SessionData::default()));
+
+        {
+            let shared = Arc::clone(&state);
+            let mut session = Session {
+                data: SessionData::default(),
+                dirty: false,
+                shared,
+            };
+            session.put("shared_key", "shared_value");
+        } // Drop here
+
+        let guard = state.data.lock().unwrap();
+        assert_eq!(
+            guard.values.get("shared_key").unwrap(),
+            &serde_json::json!("shared_value")
+        );
+        assert!(state.take_dirty());
     }
 }
