@@ -15,7 +15,7 @@ pub fn generate(input: &syn::DeriveInput) -> Result<TokenStream, syn::Error> {
 
     // Generate Column enum
     let column_variants: Vec<_> = attrs
-        .columns
+        .fields
         .iter()
         .map(|c| {
             let name = format_ident!("{}", c.field_name);
@@ -24,7 +24,7 @@ pub fn generate(input: &syn::DeriveInput) -> Result<TokenStream, syn::Error> {
         .collect();
 
     let column_names: Vec<_> = attrs
-        .columns
+        .fields
         .iter()
         .map(|c| {
             let variant = format_ident!("{}", c.field_name);
@@ -38,7 +38,7 @@ pub fn generate(input: &syn::DeriveInput) -> Result<TokenStream, syn::Error> {
     // Generate public struct (without hidden fields)
     let public_struct_name = format_ident!("{}Public", struct_name);
     let public_fields: Vec<_> = attrs
-        .columns
+        .fields
         .iter()
         .filter(|c| !c.is_hidden)
         .map(|c| {
@@ -49,7 +49,7 @@ pub fn generate(input: &syn::DeriveInput) -> Result<TokenStream, syn::Error> {
         .collect();
 
     let public_field_names: Vec<_> = attrs
-        .columns
+        .fields
         .iter()
         .filter(|c| !c.is_hidden)
         .map(|c| format_ident!("{}", c.field_name))
@@ -57,14 +57,14 @@ pub fn generate(input: &syn::DeriveInput) -> Result<TokenStream, syn::Error> {
 
     // Find the ID column for find() methods
     let id_field_name = attrs
-        .columns
+        .fields
         .iter()
-        .find(|c| c.is_id)
+        .find(|c| c.is_primary_key)
         .map(|c| c.field_name.clone())
         .unwrap_or_else(|| "id".to_string());
 
     // Column name literals for ModelMeta
-    let column_name_literals: Vec<_> = attrs.columns.iter().map(|c| &c.field_name).collect();
+    let column_name_literals: Vec<_> = attrs.fields.iter().map(|c| &c.field_name).collect();
 
     let table_name_lit = &attrs.table_name;
     let id_name_lit = &id_field_name;
