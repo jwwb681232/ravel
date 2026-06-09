@@ -3,8 +3,8 @@
 //! These tests verify that the macro generates correct types and methods.
 //! No database connection needed — purely compile-time checks.
 
-use ravel_eloquent::{Model, ModelMeta, ModelExt, Fillable, Serializes, Replicates};
-use serde::{Serialize, Deserialize};
+use ravel_eloquent::{Fillable, Model, ModelExt, ModelMeta, Replicates, Serializes};
+use serde::{Deserialize, Serialize};
 
 // ── Test model ──────────────────────────────────────────────────────────────
 
@@ -80,7 +80,10 @@ fn test_to_public_excludes_password() {
 
 #[test]
 fn test_user_public_serializable() {
-    let public = UserPublic { id: 1, name: "Bob".into() };
+    let public = UserPublic {
+        id: 1,
+        name: "Bob".into(),
+    };
     let json = serde_json::to_string(&public).unwrap();
     assert!(json.contains("\"id\""));
     assert!(json.contains("\"name\""));
@@ -211,5 +214,8 @@ fn test_replicates_is_implemented() {
 #[test]
 fn test_userpublic_has_expected_fields() {
     // Verify the UserPublic struct has the right fields by construction
-    let _ = UserPublic { id: 1, name: "test".into() };
+    let _ = UserPublic {
+        id: 1,
+        name: "test".into(),
+    };
 }

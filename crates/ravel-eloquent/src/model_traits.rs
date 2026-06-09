@@ -1,8 +1,8 @@
 use sea_orm::{ConnectionTrait, DatabaseConnection, Statement, Value};
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
-use crate::error::{Result, RavelEloquentError};
+use crate::error::{RavelEloquentError, Result};
 
 /// Model metadata — auto-implemented by #[derive(Model)]
 pub trait ModelMeta {
@@ -36,18 +36,14 @@ pub trait ModelMeta {
 #[async_trait::async_trait]
 pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'static {
     /// Find a record by its primary key.
-    async fn find(
-        db: &DatabaseConnection,
-        id: impl Into<Value> + Send,
-    ) -> Result<Option<Self>> {
+    async fn find(db: &DatabaseConnection, id: impl Into<Value> + Send) -> Result<Option<Self>> {
         let id_val: Value = id.into();
         let sql = format!(
             "SELECT * FROM \"{}\" WHERE \"{}\" = $1",
             Self::table_name(),
             Self::id_column()
         );
-        let stmt =
-            Statement::from_sql_and_values(db.get_database_backend(), &sql, [id_val]);
+        let stmt = Statement::from_sql_and_values(db.get_database_backend(), &sql, [id_val]);
         let rows = db
             .query_all_raw(stmt)
             .await
@@ -60,10 +56,7 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
     }
 
     /// Find a record by its primary key, or return `RecordNotFound` error.
-    async fn find_or_fail(
-        db: &DatabaseConnection,
-        id: impl Into<Value> + Send,
-    ) -> Result<Self> {
+    async fn find_or_fail(db: &DatabaseConnection, id: impl Into<Value> + Send) -> Result<Self> {
         let id_val: Value = id.into();
         let id_str = format!("{:?}", id_val);
         Self::find(db, id_val)
@@ -115,18 +108,16 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
             .await
             .map_err(|e| RavelEloquentError::Database(e))?;
         crate::query::row_to_model(
-            &rows.into_iter().next().ok_or_else(|| {
-                RavelEloquentError::Other("INSERT returned no rows".into())
-            })?,
+            &rows
+                .into_iter()
+                .next()
+                .ok_or_else(|| RavelEloquentError::Other("INSERT returned no rows".into()))?,
             Self::columns(),
         )
     }
 
     /// Delete a record by its primary key.
-    async fn delete_by_id(
-        db: &DatabaseConnection,
-        id: impl Into<Value> + Send,
-    ) -> Result<()> {
+    async fn delete_by_id(db: &DatabaseConnection, id: impl Into<Value> + Send) -> Result<()> {
         let id_val: Value = id.into();
         let quoted = crate::query::quote_value(&id_val);
         let sql = format!(
@@ -171,9 +162,8 @@ pub trait ActiveModelExt: ModelExt {
                 .iter()
                 .filter(|c| **c != id_col)
                 .filter_map(|c| {
-                    data.get(c).map(|v| {
-                        format!("\"{}\" = {}", c, quote_json_value(v))
-                    })
+                    data.get(c)
+                        .map(|v| format!("\"{}\" = {}", c, quote_json_value(v)))
                 })
                 .collect();
 
@@ -229,9 +219,9 @@ pub trait ActiveModelExt: ModelExt {
     async fn delete(self, db: &DatabaseConnection) -> Result<()> {
         let data = serde_json::to_value(&self)?;
         let id_col = Self::id_column();
-        let id_val = data.get(id_col).ok_or_else(|| {
-            RavelEloquentError::Other("Cannot delete: missing id".into())
-        })?;
+        let id_val = data
+            .get(id_col)
+            .ok_or_else(|| RavelEloquentError::Other("Cannot delete: missing id".into()))?;
 
         let sql = format!(
             "DELETE FROM \"{}\" WHERE \"{}\" = {}",
@@ -249,9 +239,9 @@ pub trait ActiveModelExt: ModelExt {
     async fn refresh(self, db: &DatabaseConnection) -> Result<Self> {
         let data = serde_json::to_value(&self)?;
         let id_col = Self::id_column();
-        let id_val = data.get(id_col).ok_or_else(|| {
-            RavelEloquentError::Other("Cannot refresh: missing id".into())
-        })?;
+        let id_val = data
+            .get(id_col)
+            .ok_or_else(|| RavelEloquentError::Other("Cannot refresh: missing id".into()))?;
 
         let id_for_fetch = json_val_to_sea_value(id_val);
         Self::find(db, id_for_fetch)
@@ -302,9 +292,9 @@ pub trait HasTimestamps: ActiveModelExt {
     async fn touch(self, db: &DatabaseConnection) -> Result<Self> {
         let data = serde_json::to_value(&self)?;
         let id_col = Self::id_column();
-        let id_val = data.get(id_col).ok_or_else(|| {
-            RavelEloquentError::Other("Cannot touch: missing id".into())
-        })?;
+        let id_val = data
+            .get(id_col)
+            .ok_or_else(|| RavelEloquentError::Other("Cannot touch: missing id".into()))?;
 
         let sql = format!(
             "UPDATE \"{}\" SET \"updated_at\" = NOW() WHERE \"{}\" = {}",

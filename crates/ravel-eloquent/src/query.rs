@@ -4,15 +4,13 @@
 //! `sea-query`'s type-safe expression system instead of raw SQL strings.
 //! No `EntityTrait` dependency means no duplicate entity struct is needed.
 
-use sea_orm::{
-    ColumnTrait, DatabaseConnection, Order, Statement, Value,
-};
-use sea_orm::sea_query::{self, Expr, Query, SelectStatement};
-use sea_orm::sea_query::ExprTrait;
 use sea_orm::ConnectionTrait;
+use sea_orm::sea_query::ExprTrait;
+use sea_orm::sea_query::{self, Expr, Query, SelectStatement};
+use sea_orm::{ColumnTrait, DatabaseConnection, Order, Statement, Value};
 use serde::de::DeserializeOwned;
 
-use crate::error::{Result, RavelEloquentError};
+use crate::error::{RavelEloquentError, Result};
 
 // ── QueryBuilder ───────────────────────────────────────────────────────
 
@@ -188,10 +186,8 @@ impl QueryBuilder {
     /// ORDER BY col (Direction)
     pub fn order_by(mut self, col: impl ColumnTrait, order: Order) -> Self {
         let (_, col_name) = col.as_column_ref();
-        self.select.order_by(
-            sea_query::ColumnRef::Column(col_name.into()),
-            order,
-        );
+        self.select
+            .order_by(sea_query::ColumnRef::Column(col_name.into()), order);
         self
     }
 
@@ -237,7 +233,10 @@ impl QueryBuilder {
     }
 
     /// Execute the query and return the first matching row, if any.
-    pub async fn first<T: DeserializeOwned>(mut self, db: &DatabaseConnection) -> Result<Option<T>> {
+    pub async fn first<T: DeserializeOwned>(
+        mut self,
+        db: &DatabaseConnection,
+    ) -> Result<Option<T>> {
         self.select.limit(1);
         let mut items = self.run::<T>(db).await?;
         Ok(items.pop())

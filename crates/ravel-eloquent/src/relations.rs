@@ -8,7 +8,7 @@ use sea_orm::{
     Value,
 };
 
-use crate::error::{Result, RavelEloquentError};
+use crate::error::{RavelEloquentError, Result};
 use crate::query::Page;
 
 /// Lazy-loading relation query builder.

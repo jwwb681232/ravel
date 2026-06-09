@@ -171,7 +171,10 @@ impl<S: Send + Sync + 'static> FromRequest<S> for UploadedFile {
 /// Extract the basename from a user-provided filename, stripping path
 /// separators, control characters, and limiting length.
 fn sanitize_basename(name: &str) -> String {
-    let basename = std::path::Path::new(name)
+    // Normalize backslashes so Path::file_name() behaves consistently
+    // across platforms (Linux CI, macOS, Windows).
+    let normalized = name.replace('\\', "/");
+    let basename = std::path::Path::new(&normalized)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("uploaded_file");

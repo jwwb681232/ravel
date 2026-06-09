@@ -3,8 +3,8 @@
 //! These tests exercise the full Eloquent CRUD API against a real database,
 //! verifying that model instances can be created, read, updated, and deleted.
 
+use ravel_eloquent::{ActiveModelExt, Model};
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection};
-use ravel_eloquent::{Model, ActiveModelExt};
 
 async fn setup_db() -> DatabaseConnection {
     let db = Database::connect("sqlite::memory:").await.unwrap();
@@ -99,12 +99,9 @@ async fn test_query_filter_count() {
 #[tokio::test]
 async fn test_delete_by_id() {
     let db = setup_db().await;
-    let user = TestUser::create(
-        serde_json::json!({"name": "D", "email": "d@t.com"}),
-        &db,
-    )
-    .await
-    .unwrap();
+    let user = TestUser::create(serde_json::json!({"name": "D", "email": "d@t.com"}), &db)
+        .await
+        .unwrap();
 
     TestUser::delete_by_id(&db, user.id).await.unwrap();
     let found = TestUser::find(&db, user.id).await.unwrap();

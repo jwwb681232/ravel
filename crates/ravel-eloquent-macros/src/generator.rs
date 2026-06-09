@@ -8,9 +8,9 @@
 //! 4.  Inherent impl block — `to_public()`, `query()`, `r#where()`, CRUD, setters
 //! 5.  `ModelExt` trait impl
 
+use crate::attrs::{ColumnType, ModelAttrs, to_pascal_case};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use crate::attrs::{ColumnType, ModelAttrs, to_pascal_case};
 
 // ── Public entry point ─────────────────────────────────────────────────────
 
@@ -22,18 +22,15 @@ pub fn generate(input: &syn::DeriveInput) -> syn::Result<TokenStream> {
 
 // ── Top-level composition ──────────────────────────────────────────────────
 
-fn generate_all(
-    model: &ModelAttrs,
-    struct_name: &syn::Ident,
-) -> TokenStream {
+fn generate_all(model: &ModelAttrs, struct_name: &syn::Ident) -> TokenStream {
     let public_name = format_ident!("{}Public", struct_name);
     let column_enum = format_ident!("{}Column", struct_name);
 
-    let columns     = generate_column_enum(model, &column_enum);
-    let public_     = generate_public_struct(model, &public_name);
-    let meta        = generate_model_meta(model, struct_name, &public_name, &column_enum);
-    let methods     = generate_inherent_methods(model, struct_name);
-    let traits      = generate_trait_impls(model, struct_name);
+    let columns = generate_column_enum(model, &column_enum);
+    let public_ = generate_public_struct(model, &public_name);
+    let meta = generate_model_meta(model, struct_name, &public_name, &column_enum);
+    let methods = generate_inherent_methods(model, struct_name);
+    let traits = generate_trait_impls(model, struct_name);
 
     quote! {
         #columns
@@ -164,10 +161,7 @@ fn generate_model_meta(
     let id_col = model
         .fields
         .iter()
-        .find(|f| {
-            f.is_primary_key
-                || matches!(f.col_type, ColumnType::Id | ColumnType::Uuid)
-        })
+        .find(|f| f.is_primary_key || matches!(f.col_type, ColumnType::Id | ColumnType::Uuid))
         .map(|f| f.column_name.as_str())
         .unwrap_or("id");
 
@@ -216,10 +210,10 @@ fn generate_model_meta(
 // ── 5. Inherent methods ────────────────────────────────────────────────────
 
 fn generate_inherent_methods(model: &ModelAttrs, struct_name: &syn::Ident) -> TokenStream {
-    let to_public  = generate_to_public(model, struct_name);
-    let query      = generate_query_shorthands(struct_name);
+    let to_public = generate_to_public(model, struct_name);
+    let query = generate_query_shorthands(struct_name);
     let static_crud = generate_static_crud(struct_name);
-    let setters    = generate_setters(model);
+    let setters = generate_setters(model);
 
     quote! {
         impl #struct_name {
@@ -403,4 +397,3 @@ fn generate_trait_impls(model: &ModelAttrs, struct_name: &syn::Ident) -> TokenSt
 
     quote! { #(#impls)* }
 }
-
