@@ -88,12 +88,24 @@ impl RateLimiter {
     }
 
     async fn handle(&self, req: Request, next: Next) -> Response {
+        // Identify the client:
+        // 1. ConnectInfo (real peer address, set by Axum) — most trustworthy
+        // 2. Leftmost entry of X-Forwarded-For (original client per RFC 7239)
+        // 3. Fallback — a distinct string so unidentifiable clients don't
+        //    share a single rate-limit bucket
         let client_ip = req
-            .headers()
-            .get("x-forwarded-for")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("127.0.0.1")
-            .to_string();
+            .extensions()
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+            .map(|ci| ci.0.ip().to_string())
+            .or_else(|| {
+                req.headers()
+                    .get("x-forwarded-for")
+                    .and_then(|v| v.to_str().ok())
+                    // Only take the leftmost entry (original client)
+                    .and_then(|s| s.split(',').next())
+                    .map(|s| s.trim().to_string())
+            })
+            .unwrap_or_else(|| "unknown".to_string());
 
         let (allowed, remaining, reset) = self.check(&client_ip);
 
@@ -120,6 +132,10 @@ impl RateLimiter {
     pub fn check(&self, key: &str) -> (bool, u64, Instant) {
         let mut map = self.inner.lock().unwrap();
         let now = Instant::now();
+
+        // Prune expired entries before checking (controls memory growth)
+        map.retain(|_, v| v.reset_at > now);
+
         let state = map.entry(key.to_string()).or_insert(ClientState {
             count: 0,
             reset_at: now + self.window,

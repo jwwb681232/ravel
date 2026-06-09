@@ -256,11 +256,16 @@ impl Container {
             // Take the factory out, invoke it, put the Instance back.
             let factory = {
                 let mut entries = self.entries.write();
-                match entries.remove(&key)? {
-                    Entry::SingletonFactory(f) => f,
+                match entries.remove(&key) {
+                    Some(Entry::SingletonFactory(f)) => f,
                     other => {
-                        entries.insert(key, other);
-                        // Fall through to read below
+                        // Another thread already materialised this singleton
+                        // (or the entry was otherwise removed). Restore if it
+                        // was a different variant, then fall through to read
+                        // the now-materialised instance.
+                        if let Some(entry) = other {
+                            entries.insert(key, entry);
+                        }
                         return self.read_instance::<T>();
                     }
                 }

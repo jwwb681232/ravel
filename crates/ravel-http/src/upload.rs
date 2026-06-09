@@ -45,16 +45,42 @@ pub struct UploadedFile {
 impl UploadedFile {
     /// Store the file to the given sub-directory under the storage root.
     ///
+    /// The `dir` and `original_name` are sanitised to prevent path-traversal
+    /// attacks: only the basename of the original filename is kept, parent-directory
+    /// components are rejected, and the final resolved path is verified to reside
+    /// inside [`storage_root`](Self::storage_root).
+    ///
     /// Returns the full path where the file was written.
     pub async fn store(&self, dir: &str) -> std::io::Result<PathBuf> {
-        let dest_dir = self.storage_root.join(dir);
+        // 1. Sanitize sub-directory — reject traversal attempts
+        let safe_dir = sanitize_component(dir, "uploads")?;
+        let dest_dir = self.storage_root.join(&safe_dir);
         tokio::fs::create_dir_all(&dest_dir).await?;
 
-        let filename = self.original_name.as_deref().unwrap_or("uploaded_file");
+        // 2. Extract safe basename from original filename
+        let raw_name = self.original_name.as_deref().unwrap_or("uploaded_file");
+        let safe_name = sanitize_basename(raw_name);
 
-        let path = dest_dir.join(filename);
-        tokio::fs::write(&path, &self.data).await?;
-        Ok(path)
+        // 3. Build final path and verify containment within storage_root
+        let path = dest_dir.join(&safe_name);
+
+        // Canonicalize storage_root (must exist before we can canonicalize)
+        let root = std::fs::canonicalize(&self.storage_root)
+            .unwrap_or_else(|_| self.storage_root.clone());
+
+        // Canonicalize the final path (parent dirs were created above)
+        let resolved = std::fs::canonicalize(&path)
+            .unwrap_or_else(|_| path.clone());
+
+        if !resolved.starts_with(&root) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Path traversal detected",
+            ));
+        }
+
+        tokio::fs::write(&resolved, &self.data).await?;
+        Ok(resolved)
     }
 
     /// Get the file content as a UTF-8 string (if it's text).
@@ -141,6 +167,42 @@ impl<S: Send + Sync + 'static> FromRequest<S> for UploadedFile {
     }
 }
 
+// ── Path sanitisation helpers ───────────────────────────────────────────
+
+/// Extract the basename from a user-provided filename, stripping path
+/// separators, control characters, and limiting length.
+fn sanitize_basename(name: &str) -> String {
+    let basename = std::path::Path::new(name)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("uploaded_file");
+
+    basename
+        .chars()
+        .filter(|c| !c.is_control() && *c != '/' && *c != '\\' && *c != ':')
+        .take(255)
+        .collect::<String>()
+}
+
+/// Validate a user-provided path component, rejecting parent-directory
+/// traversal and empty values.
+fn sanitize_component(dir: &str, default: &str) -> std::io::Result<String> {
+    let dir = dir.trim();
+    if dir.is_empty() {
+        return Ok(default.to_string());
+    }
+    let path = std::path::Path::new(dir);
+    for component in path.components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Invalid storage directory",
+            ));
+        }
+    }
+    Ok(dir.to_string())
+}
+
 // ── UploadError ─────────────────────────────────────────────────────────
 
 #[derive(Debug)]
@@ -198,5 +260,36 @@ mod tests {
     fn test_upload_error_too_large() {
         let resp = UploadError::TooLarge { size: 100, max: 50 }.into_response();
         assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[test]
+    fn test_sanitize_basename_blocks_path_traversal() {
+        let result = sanitize_basename("../../../etc/passwd");
+        assert_eq!(result, "passwd");
+
+        let result = sanitize_basename("..\\..\\windows\\system32");
+        assert_eq!(result, "system32");
+
+        let result = sanitize_basename("/absolute/path/file.txt");
+        assert_eq!(result, "file.txt");
+
+        let result = sanitize_basename("normal_file.jpg");
+        assert_eq!(result, "normal_file.jpg");
+
+        // Empty / missing
+        let result = sanitize_basename("");
+        assert_eq!(result, "uploaded_file");
+    }
+
+    #[test]
+    fn test_sanitize_component_rejects_traversal() {
+        assert!(sanitize_component("normal_dir", "default").is_ok());
+        assert!(sanitize_component("sub/dir", "default").is_ok());
+        assert!(sanitize_component("..", "default").is_err());
+        assert!(sanitize_component("../etc", "default").is_err());
+        assert_eq!(
+            sanitize_component("", "default").unwrap(),
+            "default"
+        );
     }
 }
