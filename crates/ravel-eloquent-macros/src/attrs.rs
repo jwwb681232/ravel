@@ -42,15 +42,16 @@ pub fn parse_container_attrs(attrs: &[Attribute]) -> Result<String, syn::Error> 
         if let Meta::List(list) = &attr.meta {
             let tokens = list.tokens.to_string();
             if let Some(start) = tokens.find("table")
-                && let Some(eq) = tokens[start..].find('=') {
-                    let rest = &tokens[start + eq + 1..].trim();
-                    if let Some(q) = rest.find('"') {
-                        let inner = &rest[q + 1..];
-                        if let Some(end) = inner.find('"') {
-                            return Ok(inner[..end].to_string());
-                        }
+                && let Some(eq) = tokens[start..].find('=')
+            {
+                let rest = &tokens[start + eq + 1..].trim();
+                if let Some(q) = rest.find('"') {
+                    let inner = &rest[q + 1..];
+                    if let Some(end) = inner.find('"') {
+                        return Ok(inner[..end].to_string());
                     }
                 }
+            }
         }
     }
     Err(syn::Error::new(
@@ -147,22 +148,24 @@ pub fn parse_model(input: &syn::DeriveInput) -> Result<ModelAttrs, syn::Error> {
     let mut has_timestamps = false;
 
     if let syn::Data::Struct(data) = &input.data
-        && let Fields::Named(fields) = &data.fields {
-            for field in &fields.named {
-                let field_name = field.ident.as_ref().unwrap().to_string();
-                let mut col = parse_field_attrs(&field.attrs);
+        && let Fields::Named(fields) = &data.fields
+    {
+        for field in &fields.named {
+            let field_name = field.ident.as_ref().unwrap().to_string();
+            let mut col = parse_field_attrs(&field.attrs);
 
-                // Check for timestamps attribute special case
-                if (field_name == "created_at" || field_name == "updated_at")
-                    && matches!(col.col_type, ColumnType::DateTime) {
-                        has_timestamps = true;
-                    }
-
-                col.field_name = field_name;
-                col.field_type = field.ty.clone();
-                columns.push(col);
+            // Check for timestamps attribute special case
+            if (field_name == "created_at" || field_name == "updated_at")
+                && matches!(col.col_type, ColumnType::DateTime)
+            {
+                has_timestamps = true;
             }
+
+            col.field_name = field_name;
+            col.field_type = field.ty.clone();
+            columns.push(col);
         }
+    }
 
     Ok(ModelAttrs {
         table_name,

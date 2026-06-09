@@ -65,12 +65,11 @@ impl UploadedFile {
         let path = dest_dir.join(&safe_name);
 
         // Canonicalize storage_root (must exist before we can canonicalize)
-        let root = std::fs::canonicalize(&self.storage_root)
-            .unwrap_or_else(|_| self.storage_root.clone());
+        let root =
+            std::fs::canonicalize(&self.storage_root).unwrap_or_else(|_| self.storage_root.clone());
 
         // Canonicalize the final path (parent dirs were created above)
-        let resolved = std::fs::canonicalize(&path)
-            .unwrap_or_else(|_| path.clone());
+        let resolved = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
 
         if !resolved.starts_with(&root) {
             return Err(std::io::Error::new(
@@ -287,9 +286,6 @@ mod tests {
         assert!(sanitize_component("sub/dir", "default").is_ok());
         assert!(sanitize_component("..", "default").is_err());
         assert!(sanitize_component("../etc", "default").is_err());
-        assert_eq!(
-            sanitize_component("", "default").unwrap(),
-            "default"
-        );
+        assert_eq!(sanitize_component("", "default").unwrap(), "default");
     }
 }

@@ -22,10 +22,11 @@ impl Session {
     pub fn put<T: serde::Serialize>(key: &str, value: &T) {
         let _ = REQUEST.try_with(|ctx| {
             if let Ok(val) = serde_json::to_value(value)
-                && let Ok(mut guard) = ctx.session.data.lock() {
-                    guard.values.insert(key.to_string(), val);
-                    ctx.session.mark_dirty();
-                }
+                && let Ok(mut guard) = ctx.session.data.lock()
+            {
+                guard.values.insert(key.to_string(), val);
+                ctx.session.mark_dirty();
+            }
         });
     }
 
@@ -52,10 +53,11 @@ impl Session {
     pub fn flash<T: serde::Serialize>(key: &str, value: &T) {
         let _ = REQUEST.try_with(|ctx| {
             if let Ok(val) = serde_json::to_value(value)
-                && let Ok(mut guard) = ctx.session.data.lock() {
-                    guard.flash.insert(key.to_string(), val);
-                    ctx.session.mark_dirty();
-                }
+                && let Ok(mut guard) = ctx.session.data.lock()
+            {
+                guard.flash.insert(key.to_string(), val);
+                ctx.session.mark_dirty();
+            }
         });
     }
 

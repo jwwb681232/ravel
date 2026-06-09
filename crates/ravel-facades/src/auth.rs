@@ -38,10 +38,11 @@ impl Auth {
     pub fn login<T: serde::Serialize>(id: &T) {
         let _ = REQUEST.try_with(|ctx| {
             if let Ok(val) = serde_json::to_value(id)
-                && let Ok(mut guard) = ctx.session.data.lock() {
-                    guard.values.insert("_auth_id".into(), val);
-                    ctx.session.mark_dirty();
-                }
+                && let Ok(mut guard) = ctx.session.data.lock()
+            {
+                guard.values.insert("_auth_id".into(), val);
+                ctx.session.mark_dirty();
+            }
         });
     }
 

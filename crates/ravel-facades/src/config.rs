@@ -6,8 +6,7 @@ pub struct Config;
 
 impl Config {
     pub fn get<T: DeserializeOwned>(key: &str) -> Option<T> {
-        let app = app()
-            .expect("Application not booted — call Application::boot() first");
+        let app = app().expect("Application not booted — call Application::boot() first");
         app.config().get(key)
     }
 
@@ -16,8 +15,7 @@ impl Config {
     }
 
     pub fn has(key: &str) -> bool {
-        let app = app()
-            .expect("Application not booted — call Application::boot() first");
+        let app = app().expect("Application not booted — call Application::boot() first");
         app.config().has(key)
     }
 }

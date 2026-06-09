@@ -67,14 +67,12 @@ impl SessionState {
 
     /// Mark the session as modified (cookie will be re-written).
     pub fn mark_dirty(&self) {
-        self.dirty
-            .store(true, std::sync::atomic::Ordering::Release);
+        self.dirty.store(true, std::sync::atomic::Ordering::Release);
     }
 
     /// Check and clear the dirty flag.
     pub fn take_dirty(&self) -> bool {
-        self.dirty
-            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        self.dirty.swap(false, std::sync::atomic::Ordering::AcqRel)
     }
 }
 

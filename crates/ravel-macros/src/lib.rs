@@ -147,7 +147,8 @@ impl syn::parse::Parse for TestMacroArgs {
         let mut app_factory = None;
 
         // Parse comma-separated meta items: `app = "path"`
-        let metas = syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input)?;
+        let metas =
+            syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input)?;
         for meta in &metas {
             if let syn::Meta::NameValue(nv) = meta {
                 if nv.path.is_ident("app") {

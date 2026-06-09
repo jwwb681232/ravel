@@ -96,10 +96,10 @@ impl Csrf {
     pub fn middleware(
         self,
     ) -> impl Fn(Request, Next) -> Pin<Box<dyn std::future::Future<Output = Response> + Send>>
-         + Clone
-         + Send
-         + Sync
-         + 'static {
+    + Clone
+    + Send
+    + Sync
+    + 'static {
         move |req: Request, next: Next| {
             let csrf = self.clone();
             Box::pin(async move { csrf.handle(req, next).await })
@@ -202,7 +202,12 @@ mod tests {
         // Token should be stored in session
         let guard = state.data.lock().unwrap();
         assert_eq!(
-            guard.values.get(CSRF_SESSION_KEY).unwrap().as_str().unwrap(),
+            guard
+                .values
+                .get(CSRF_SESSION_KEY)
+                .unwrap()
+                .as_str()
+                .unwrap(),
             token
         );
         assert!(state.take_dirty());
@@ -243,7 +248,12 @@ mod tests {
         assert_ne!(new_token, "test-csrf-token");
         let guard = state.data.lock().unwrap();
         assert_eq!(
-            guard.values.get(CSRF_SESSION_KEY).unwrap().as_str().unwrap(),
+            guard
+                .values
+                .get(CSRF_SESSION_KEY)
+                .unwrap()
+                .as_str()
+                .unwrap(),
             new_token
         );
         assert!(state.take_dirty());
