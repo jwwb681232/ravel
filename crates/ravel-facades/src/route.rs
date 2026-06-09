@@ -101,10 +101,17 @@ impl Route {
         Self::with_router(|state| {
             state.group_stack.push(prefix.to_string());
         });
+        // Use a guard to ensure the group prefix is popped even if f() panics.
+        struct GroupGuard;
+        impl Drop for GroupGuard {
+            fn drop(&mut self) {
+                Route::with_router(|state| {
+                    state.group_stack.pop();
+                });
+            }
+        }
+        let _guard = GroupGuard;
         f();
-        Self::with_router(|state| {
-            state.group_stack.pop();
-        });
     }
 
     pub fn middleware<F>(f: F)

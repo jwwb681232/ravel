@@ -10,6 +10,9 @@ use syn::{DeriveInput, LitStr, parse_macro_input};
 
 /// Derive macro that implements the `Job` trait.
 ///
+/// The user **must** define an inherent `async fn execute(&self) -> anyhow::Result<()>`
+/// method on their struct — the generated `Job::handle()` delegates to it.
+///
 /// Supports the following attributes:
 /// - `#[job(name = "my_job")]` — override the default snake_case job name
 /// - `#[job(queue = "high_priority")]` — set the queue name (default: "default")
@@ -21,6 +24,13 @@ use syn::{DeriveInput, LitStr, parse_macro_input};
 /// #[derive(Serialize, Deserialize, Job)]
 /// #[job(name = "send_welcome", queue = "mail", max_attempts = 5)]
 /// struct SendWelcomeEmail { user_id: u32 }
+///
+/// impl SendWelcomeEmail {
+///     async fn execute(&self) -> anyhow::Result<()> {
+///         // your job logic here
+///         Ok(())
+///     }
+/// }
 /// ```
 #[proc_macro_derive(Job, attributes(job))]
 pub fn derive_job(input: TokenStream) -> TokenStream {
@@ -59,7 +69,7 @@ pub fn derive_job(input: TokenStream) -> TokenStream {
         #[async_trait::async_trait]
         impl ravel_support::queue::Job for #name {
             async fn handle(&self) -> anyhow::Result<()> {
-                self.__ravel_job_handle().await
+                self.execute().await
             }
 
             fn name() -> &'static str {

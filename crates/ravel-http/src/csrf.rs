@@ -57,10 +57,10 @@ impl Csrf {
     /// Read the CSRF token from session state, generating one if absent.
     fn get_or_create_token(state: &crate::session::SessionState) -> String {
         let mut guard = state.data.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(v) = guard.values.get(CSRF_SESSION_KEY) {
-            if let Some(token) = v.as_str() {
-                return token.to_string();
-            }
+        if let Some(v) = guard.values.get(CSRF_SESSION_KEY)
+            && let Some(token) = v.as_str()
+        {
+            return token.to_string();
         }
         let token = Self::generate_token();
         guard

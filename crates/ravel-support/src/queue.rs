@@ -203,7 +203,13 @@ impl JobRegistry {
 
     pub fn register<J: Job>(&mut self) {
         let handler: JobHandler = Arc::new(|payload: &str| {
-            let job: J = serde_json::from_str(payload).expect("Job deserialization failed");
+            let job: J = match serde_json::from_str(payload) {
+                Ok(j) => j,
+                Err(e) => {
+                    tracing::error!("Job deserialization failed for {}: {e}", J::name());
+                    return Box::pin(async move { Err(anyhow::anyhow!("{e}")) });
+                }
+            };
             Box::pin(async move { job.handle().await })
         });
         self.handlers.insert(J::name().to_string(), handler);

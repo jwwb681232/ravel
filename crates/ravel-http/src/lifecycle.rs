@@ -151,15 +151,19 @@ impl LifecycleHooks {
                 for hook in &hooks.before_hooks {
                     hook(&req);
                 }
+                // Capture metadata before req is consumed by next.run()
+                let method = req.method().clone();
+                let uri = req.uri().clone();
+                let headers = req.headers().clone();
                 let resp = next.run(req).await;
                 for hook in &hooks.after_hooks {
-                    hook(
-                        &Request::builder()
-                            .uri("/")
-                            .body(axum::body::Body::empty())
-                            .unwrap(),
-                        &resp,
-                    );
+                    let mut snapshot = Request::builder()
+                        .method(&method)
+                        .uri(&uri)
+                        .body(axum::body::Body::empty())
+                        .unwrap();
+                    *snapshot.headers_mut() = headers.clone();
+                    hook(&snapshot, &resp);
                 }
                 resp
             })

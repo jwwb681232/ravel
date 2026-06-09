@@ -16,7 +16,12 @@ impl Queue {
 
     pub fn dispatch<J: Job + serde::Serialize>(job: J) -> Result<()> {
         let engine = Self::engine();
-        tokio::runtime::Handle::current().block_on(engine.dispatch(job))
+        tokio::spawn(async move {
+            if let Err(e) = engine.dispatch(job).await {
+                tracing::error!("Queue dispatch failed: {e}");
+            }
+        });
+        Ok(())
     }
 
     pub fn dispatch_later<J: Job + serde::Serialize>(
@@ -24,7 +29,12 @@ impl Queue {
         delay: chrono::Duration,
     ) -> Result<()> {
         let engine = Self::engine();
-        tokio::runtime::Handle::current().block_on(engine.dispatch_later(job, delay))
+        tokio::spawn(async move {
+            if let Err(e) = engine.dispatch_later(job, delay).await {
+                tracing::error!("Queue dispatch_later failed: {e}");
+            }
+        });
+        Ok(())
     }
 
     pub fn pending() -> Result<usize> {
