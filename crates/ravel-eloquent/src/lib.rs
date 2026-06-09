@@ -19,7 +19,7 @@
 mod query;
 mod relations;
 
-pub use query::{ModelExt, ModelMeta, ModelQuery, Page};
+pub use query::{ModelExt, ModelMeta, ModelQuery, Page, defaults};
 pub use ravel_eloquent_macros::Model;
 pub use relations::{HasRelations, RelatedModel, RelationBuilder};
 pub use sea_orm;

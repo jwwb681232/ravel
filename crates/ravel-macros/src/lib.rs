@@ -160,17 +160,14 @@ impl syn::parse::Parse for TestMacroArgs {
         let metas =
             syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated(input)?;
         for meta in &metas {
-            if let syn::Meta::NameValue(nv) = meta {
-                if nv.path.is_ident("app") {
-                    if let syn::Expr::Lit(expr_lit) = &nv.value {
-                        if let syn::Lit::Str(lit) = &expr_lit.lit {
+            if let syn::Meta::NameValue(nv) = meta
+                && nv.path.is_ident("app")
+                    && let syn::Expr::Lit(expr_lit) = &nv.value
+                        && let syn::Lit::Str(lit) = &expr_lit.lit {
                             let path: syn::Path =
                                 lit.parse().expect("invalid path in `app = \"...\"`");
                             app_factory = Some(quote! { #path() });
                         }
-                    }
-                }
-            }
         }
 
         Ok(TestMacroArgs { app_factory })

@@ -123,6 +123,76 @@ pub fn generate(input: &syn::DeriveInput) -> Result<TokenStream, syn::Error> {
             ) -> ravel_eloquent::ModelQuery<Self> {
                 Self::query().r#where(col, val)
             }
+
+            /// Retrieve all records.
+            pub async fn all(
+                db: &sea_orm::DatabaseConnection,
+            ) -> anyhow::Result<Vec<Self>> {
+                ravel_eloquent::defaults::all::<Self>(db).await
+            }
+
+            /// Find by primary key.
+            pub async fn find(
+                db: &sea_orm::DatabaseConnection,
+                id: impl Into<sea_orm::Value> + std::marker::Send,
+            ) -> anyhow::Result<Option<Self>> {
+                ravel_eloquent::defaults::find::<Self>(db, id).await
+            }
+
+            /// Find or return an error.
+            pub async fn find_or_fail(
+                db: &sea_orm::DatabaseConnection,
+                id: impl Into<sea_orm::Value> + std::marker::Send,
+            ) -> anyhow::Result<Self> {
+                <Self as ravel_eloquent::ModelExt>::find_or_fail(db, id).await
+            }
+
+            /// Create a new record from JSON data.
+            pub async fn create(
+                data: serde_json::Value,
+                db: &sea_orm::DatabaseConnection,
+            ) -> anyhow::Result<Self> {
+                ravel_eloquent::defaults::create::<Self>(data, db).await
+            }
+        }
+
+        // ── ModelExt trait impl ────────────────────────────────────
+        #[async_trait::async_trait]
+        impl ravel_eloquent::ModelExt for #struct_name {
+            async fn create(
+                data: serde_json::Value,
+                db: &sea_orm::DatabaseConnection,
+            ) -> anyhow::Result<Self> {
+                ravel_eloquent::defaults::create::<Self>(data, db).await
+            }
+
+            async fn update_by_id(
+                db: &sea_orm::DatabaseConnection,
+                id: impl Into<sea_orm::Value> + Send,
+                data: serde_json::Value,
+            ) -> anyhow::Result<()> {
+                ravel_eloquent::defaults::update_by_id::<Self>(db, id, data).await
+            }
+
+            async fn delete_by_id(
+                db: &sea_orm::DatabaseConnection,
+                id: impl Into<sea_orm::Value> + Send,
+            ) -> anyhow::Result<()> {
+                ravel_eloquent::defaults::delete_by_id::<Self>(db, id).await
+            }
+
+            async fn find(
+                db: &sea_orm::DatabaseConnection,
+                id: impl Into<sea_orm::Value> + Send,
+            ) -> anyhow::Result<Option<Self>> {
+                ravel_eloquent::defaults::find::<Self>(db, id).await
+            }
+
+            async fn all(
+                db: &sea_orm::DatabaseConnection,
+            ) -> anyhow::Result<Vec<Self>> {
+                ravel_eloquent::defaults::all::<Self>(db).await
+            }
         }
     };
 
