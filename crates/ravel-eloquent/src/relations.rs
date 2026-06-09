@@ -1,76 +1,164 @@
-//! Relationship support — has_many, belongs_to.
+//! Lazy-loading relation query builder.
+//!
+//! Wraps SeaORM's `Select<R>` to provide a fluent API for loading related
+//! models, mirroring the same pattern as [`QueryBuilder`](crate::query::QueryBuilder).
 
-use sea_orm::Value;
-use serde::de::DeserializeOwned;
+use sea_orm::{
+    ColumnTrait, DatabaseConnection, EntityTrait, Order, QueryFilter, QueryOrder, QuerySelect,
+    Value,
+};
 
-pub trait RelatedModel: DeserializeOwned + Send + Sync + 'static {}
-impl<T: DeserializeOwned + Send + Sync + 'static> RelatedModel for T {}
+use crate::error::{Result, RavelEloquentError};
+use crate::query::Page;
 
-/// Builder for relationship queries.
-pub struct RelationBuilder<T: RelatedModel> {
-    pub(crate) foreign_table: String,
-    pub(crate) foreign_key: String,
-    pub(crate) local_value: Value,
-    _marker: std::marker::PhantomData<T>,
+/// Lazy-loading relation query builder.
+///
+/// Wraps a SeaORM `Select<R>` so you can filter, order, and paginate a related
+/// entity before executing — the same fluent pattern as [`QueryBuilder`].
+///
+/// # Type parameters
+///
+/// * `R` — the SeaORM entity trait for the *related* table.
+pub struct RelationQuery<R: EntityTrait> {
+    select: sea_orm::Select<R>,
 }
 
-impl<T: RelatedModel> RelationBuilder<T> {
-    pub fn has_many(
-        foreign_table: impl Into<String>,
-        foreign_key: impl Into<String>,
-        local_value: impl Into<Value>,
-    ) -> Self {
-        Self {
-            foreign_table: foreign_table.into(),
-            foreign_key: foreign_key.into(),
-            local_value: local_value.into(),
-            _marker: std::marker::PhantomData,
-        }
+impl<R: EntityTrait> RelationQuery<R> {
+    /// Create a new relation query using `R::find()`.
+    pub fn new() -> Self {
+        Self { select: R::find() }
     }
 
-    pub fn belongs_to(
-        parent_table: impl Into<String>,
-        foreign_key: impl Into<String>,
-        foreign_value: impl Into<Value>,
-    ) -> Self {
-        Self {
-            foreign_table: parent_table.into(),
-            foreign_key: foreign_key.into(),
-            local_value: foreign_value.into(),
-            _marker: std::marker::PhantomData,
-        }
+    /// Wrap an existing SeaORM `Select<R>`.
+    pub fn from_select(select: sea_orm::Select<R>) -> Self {
+        Self { select }
     }
 
-    /// Produce a SELECT SQL string for this relationship.
-    pub fn to_sql(&self) -> String {
-        format!(
-            "SELECT * FROM \"{}\" WHERE \"{}\" = {}",
-            self.foreign_table,
-            self.foreign_key,
-            crate::query::quote_value(&self.local_value)
-        )
+    // ── WHERE conditions (type-safe column enum) ─────────────────────────
+
+    /// WHERE col = val
+    pub fn filter(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
+        self.select = self.select.filter(col.eq(val.into()));
+        self
+    }
+
+    /// WHERE col > val
+    pub fn filter_gt(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
+        self.select = self.select.filter(col.gt(val.into()));
+        self
+    }
+
+    /// WHERE col IN (vals...)
+    pub fn filter_in(mut self, col: impl ColumnTrait, vals: Vec<impl Into<Value>>) -> Self {
+        let values: Vec<Value> = vals.into_iter().map(|v| v.into()).collect();
+        self.select = self.select.filter(col.is_in(values));
+        self
+    }
+
+    /// WHERE col IS NULL
+    pub fn filter_null(mut self, col: impl ColumnTrait) -> Self {
+        self.select = self.select.filter(col.is_null());
+        self
+    }
+
+    /// WHERE col IS NOT NULL
+    pub fn filter_not_null(mut self, col: impl ColumnTrait) -> Self {
+        self.select = self.select.filter(col.is_not_null());
+        self
+    }
+
+    // ── ORDER BY ─────────────────────────────────────────────────────────
+
+    /// ORDER BY col (Direction)
+    pub fn order_by(mut self, col: impl ColumnTrait, order: Order) -> Self {
+        self.select = self.select.order_by(col, order);
+        self
+    }
+
+    /// ORDER BY col ASC
+    pub fn order_by_asc(mut self, col: impl ColumnTrait) -> Self {
+        self.select = self.select.order_by_asc(col);
+        self
+    }
+
+    /// ORDER BY col DESC
+    pub fn order_by_desc(mut self, col: impl ColumnTrait) -> Self {
+        self.select = self.select.order_by_desc(col);
+        self
+    }
+
+    // ── Pagination ───────────────────────────────────────────────────────
+
+    /// LIMIT n
+    pub fn limit(mut self, n: u64) -> Self {
+        self.select = self.select.limit(n);
+        self
+    }
+
+    /// OFFSET n
+    pub fn offset(mut self, n: u64) -> Self {
+        self.select = self.select.offset(n);
+        self
+    }
+
+    // ── Execution ────────────────────────────────────────────────────────
+
+    /// Execute and return all matching related rows.
+    pub async fn get(self, db: &DatabaseConnection) -> Result<Vec<R::Model>> {
+        self.select
+            .all(db)
+            .await
+            .map_err(|e| RavelEloquentError::Database(e))
+    }
+
+    /// Execute and return the first matching related row, if any.
+    pub async fn first(self, db: &DatabaseConnection) -> Result<Option<R::Model>> {
+        self.select
+            .one(db)
+            .await
+            .map_err(|e| RavelEloquentError::Database(e))
+    }
+
+    /// Return the number of matching related rows.
+    pub async fn count(self, db: &DatabaseConnection) -> Result<u64> {
+        let items = self
+            .select
+            .all(db)
+            .await
+            .map_err(|e| RavelEloquentError::Database(e))?;
+        Ok(items.len() as u64)
+    }
+
+    /// Return whether any matching related rows exist.
+    pub async fn exists(self, db: &DatabaseConnection) -> Result<bool> {
+        self.count(db).await.map(|c| c > 0)
+    }
+
+    /// Execute and paginate the related rows.
+    pub async fn paginate(
+        self,
+        db: &DatabaseConnection,
+        page: u64,
+        per_page: u64,
+    ) -> Result<Page<R::Model>> {
+        let all_items = self
+            .select
+            .all(db)
+            .await
+            .map_err(|e| RavelEloquentError::Database(e))?;
+        let total = all_items.len() as u64;
+        let offset = (page.saturating_sub(1)).saturating_mul(per_page) as usize;
+        let items: Vec<_> = all_items
+            .into_iter()
+            .skip(offset)
+            .take(per_page as usize)
+            .collect();
+        Ok(Page::new(items, total, page.max(1), per_page))
     }
 }
 
-/// Extension trait for models to add relationship helpers.
-pub trait HasRelations: DeserializeOwned {
-    fn has_many<R: RelatedModel>(
-        &self,
-        foreign_table: &str,
-        foreign_key: &str,
-        local_id: Value,
-    ) -> RelationBuilder<R> {
-        RelationBuilder::has_many(foreign_table, foreign_key, local_id)
-    }
-
-    fn belongs_to<R: RelatedModel>(
-        &self,
-        parent_table: &str,
-        foreign_key: &str,
-        foreign_id: Value,
-    ) -> RelationBuilder<R> {
-        RelationBuilder::belongs_to(parent_table, foreign_key, foreign_id)
+impl<R: EntityTrait> Default for RelationQuery<R> {
+    fn default() -> Self {
+        Self::new()
     }
 }
-
-impl<T: DeserializeOwned> HasRelations for T {}

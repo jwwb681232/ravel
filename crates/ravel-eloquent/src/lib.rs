@@ -30,5 +30,5 @@ pub use model_traits::{
 };
 pub use query::{Page, QueryBuilder};
 pub use ravel_eloquent_macros::Model;
-pub use relations::{HasRelations, RelatedModel, RelationBuilder};
+pub use relations::RelationQuery;
 pub use sea_orm;
