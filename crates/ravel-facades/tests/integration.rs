@@ -237,9 +237,10 @@ fn test_cache_panics_without_with_cache() {
 }
 
 #[test]
-#[should_panic(expected = "Application not booted")]
-fn test_facades_panic_before_boot() {
+fn test_facades_graceful_degradation_before_boot() {
     let _l = lock();
     reset_app();
-    Config::get::<String>("any.key");
+    // Config gracefully returns None instead of panicking
+    let result = Config::get::<String>("any.key");
+    assert!(result.is_none());
 }

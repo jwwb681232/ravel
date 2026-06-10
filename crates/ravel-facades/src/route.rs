@@ -185,3 +185,63 @@ impl Route {
         Self::clear_list();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    // Global state shared across Route facade tests — serialise them.
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    async fn dummy_handler() -> &'static str {
+        "ok"
+    }
+
+    #[test]
+    fn test_route_list_records_routes() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        Route::reset();
+        Route::get("/", dummy_handler);
+        Route::post("/users", dummy_handler);
+        Route::delete("/users/{id}", dummy_handler);
+
+        let routes = Route::list();
+        assert_eq!(routes.len(), 3);
+        assert_eq!(routes[0].method, "GET");
+        assert_eq!(routes[0].path, "/");
+        assert_eq!(routes[1].method, "POST");
+        assert_eq!(routes[1].path, "/users");
+        assert_eq!(routes[2].method, "DELETE");
+        assert_eq!(routes[2].path, "/users/{id}");
+    }
+
+    #[test]
+    fn test_route_list_respects_group_prefix() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        Route::reset();
+        Route::group("/api", || {
+            Route::get("/health", dummy_handler);
+            Route::post("/login", dummy_handler);
+        });
+
+        let routes = Route::list();
+        assert_eq!(routes.len(), 2);
+        assert_eq!(routes[0].path, "/api/health");
+        assert_eq!(routes[1].path, "/api/login");
+    }
+
+    #[test]
+    fn test_route_list_resets() {
+        let _lock = TEST_LOCK.lock().unwrap();
+        Route::reset();
+        Route::get("/a", dummy_handler);
+        assert_eq!(Route::list().len(), 1);
+
+        Route::reset();
+        assert!(Route::list().is_empty());
+
+        Route::get("/b", dummy_handler);
+        assert_eq!(Route::list().len(), 1);
+    }
+}
