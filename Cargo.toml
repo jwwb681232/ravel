@@ -15,5 +15,6 @@ members = [
     "crates/ravel-facades",
     "crates/ravel-test",
 ]
+exclude = ["MyApp"]
 
 resolver = "2"
