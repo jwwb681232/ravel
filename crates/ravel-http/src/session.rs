@@ -203,6 +203,7 @@ impl SessionConfig {
         raw.and_then(|s| serde_json::from_str(&s).ok())
     }
 
+    #[cfg(feature = "redis")]
     fn session_id_from_cookie(&self, cookie_header: Option<&str>) -> Option<String> {
         cookie_header.and_then(|h| {
             h.split(';')
