@@ -337,25 +337,61 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
             .map(|i| format!("${}", i))
             .collect();
 
-        let sql = format!(
-            "INSERT INTO \"{}\" ({}) VALUES ({}) RETURNING *",
-            Self::table_name(),
-            cols.join(", "),
-            placeholders.join(", ")
-        );
+        match backend {
+            sea_orm::DbBackend::MySql => {
+                // MySQL does not support RETURNING — insert first, then
+                // resolve the primary key via LAST_INSERT_ID or the
+                // caller-supplied value, and fetch the row.
+                let sql = format!(
+                    "INSERT INTO \"{}\" ({}) VALUES ({})",
+                    Self::table_name(),
+                    cols.join(", "),
+                    placeholders.join(", "),
+                );
+                let stmt = Statement::from_sql_and_values(backend, &sql, values);
+                let result = db
+                    .execute(&StmtExec(stmt))
+                    .await
+                    .map_err(RavelEloquentError::Database)?;
 
-        let stmt = Statement::from_sql_and_values(backend, &sql, values);
-        let rows = db
-            .query_all_raw(stmt)
-            .await
-            .map_err(RavelEloquentError::Database)?;
-        crate::query::row_to_model(
-            &rows
-                .into_iter()
-                .next()
-                .ok_or_else(|| RavelEloquentError::Other("INSERT returned no rows".into()))?,
-            Self::columns(),
-        )
+                let id_col = Self::id_column();
+                let auto_id = result.last_insert_id();
+                let fetch_id = if auto_id > 0 {
+                    Value::BigInt(Some(auto_id as i64))
+                } else {
+                    json_val_to_sea_value(data.get(id_col).ok_or_else(|| {
+                        RavelEloquentError::Other(format!(
+                            "Primary key '{id_col}' not found in insert data and no auto-increment id returned",
+                        ).into())
+                    })?)
+                };
+
+                Self::find(db, fetch_id)
+                    .await?
+                    .ok_or_else(|| RavelEloquentError::Other("INSERT succeeded but row not found on fetch-back".into()))
+            }
+            _ => {
+                // PostgreSQL and SQLite (3.35+) support RETURNING.
+                let sql = format!(
+                    "INSERT INTO \"{}\" ({}) VALUES ({}) RETURNING *",
+                    Self::table_name(),
+                    cols.join(", "),
+                    placeholders.join(", "),
+                );
+                let stmt = Statement::from_sql_and_values(backend, &sql, values);
+                let rows = db
+                    .query_all_raw(stmt)
+                    .await
+                    .map_err(RavelEloquentError::Database)?;
+                crate::query::row_to_model(
+                    &rows
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| RavelEloquentError::Other("INSERT returned no rows".into()))?,
+                    Self::columns(),
+                )
+            }
+        }
     }
 
     /// Delete records by their primary key(s). Supports soft deletes.
