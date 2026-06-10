@@ -188,17 +188,22 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
         // Collect local-key values from the parent models.
         let ids: Vec<String> = items
             .iter()
-            .map(|item| {
-                let json = serde_json::to_value(item).unwrap();
-                let id_val = json.get(meta.local_key).unwrap();
-                match id_val {
+            .map(|item| -> Result<String> {
+                let json = serde_json::to_value(item)?;
+                let id_val = json.get(meta.local_key).ok_or_else(|| {
+                    RavelEloquentError::Other(format!(
+                        "Key '{}' not found in serialized model",
+                        meta.local_key
+                    ).into())
+                })?;
+                Ok(match id_val {
                     serde_json::Value::Number(n) => n.to_string(),
                     serde_json::Value::String(s) => s.clone(),
                     serde_json::Value::Bool(b) => b.to_string(),
                     _ => id_val.to_string(),
-                }
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         if ids.is_empty() {
             return Ok(());
@@ -257,30 +262,46 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
                 let val = crate::query::try_extract(&row, i);
                 map.insert(col_name.to_string(), val);
             }
-            let fk = match map.get(meta.foreign_key).unwrap() {
+            let fk_val = map.get(meta.foreign_key).ok_or_else(|| {
+                RavelEloquentError::Other(format!(
+                    "Foreign key '{}' not found in related row",
+                    meta.foreign_key,
+                ).into())
+            })?;
+            let fk = match fk_val {
                 serde_json::Value::Number(n) => n.to_string(),
                 serde_json::Value::String(s) => s.clone(),
-                _ => map.get(meta.foreign_key).unwrap().to_string(),
+                _ => fk_val.to_string(),
             };
             grouped.entry(fk).or_default().push(map);
         }
 
         // Inject grouped data back into the parent JSON values.
-        let mut json_values: Vec<serde_json::Value> =
-            items.iter().map(|i| serde_json::to_value(i).unwrap()).collect();
+        let mut json_values: Vec<serde_json::Value> = items
+            .iter()
+            .map(|i| serde_json::to_value(i))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
         for val in &mut json_values {
-            let id = match val.get(meta.local_key).unwrap() {
+            let id_val = val.get(meta.local_key).ok_or_else(|| {
+                RavelEloquentError::Other(format!(
+                    "Local key '{}' not found in serialized parent model",
+                    meta.local_key
+                ).into())
+            })?;
+            let id = match id_val {
                 serde_json::Value::Number(n) => n.to_string(),
                 serde_json::Value::String(s) => s.clone(),
-                _ => val.get(meta.local_key).unwrap().to_string(),
+                _ => id_val.to_string(),
             };
             if let Some(rel_items) = grouped.get(&id) {
                 match meta.kind {
                     RelationKind::HasMany => {
-                        val[rel] = serde_json::to_value(rel_items).unwrap();
+                        val[rel] = serde_json::to_value(rel_items)?;
                     }
                     RelationKind::HasOne | RelationKind::BelongsTo | RelationKind::BelongsToMany => {
-                        val[rel] = serde_json::to_value(&rel_items.first()).unwrap();
+                        val[rel] = serde_json::to_value(rel_items.first().ok_or_else(|| {
+                            RavelEloquentError::Other("Empty relation group for HasOne/BelongsTo".into())
+                        })?)?;
                     }
                 }
             }
@@ -289,8 +310,8 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
         // Re-deserialise into the parent model.
         let new_items: Vec<Self> = json_values
             .iter()
-            .map(|v| serde_json::from_value(v.clone()).unwrap())
-            .collect();
+            .map(|v| serde_json::from_value(v.clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
         *items = new_items;
 
         Ok(())
@@ -303,24 +324,29 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
             .iter()
             .map(|c| format!("\"{}\"", c))
             .collect();
-        let vals: Vec<String> = Self::columns()
+        let values: Vec<Value> = Self::columns()
             .iter()
             .map(|c| {
                 data.get(c)
-                    .map(quote_json_value)
-                    .unwrap_or_else(|| "NULL".into())
+                    .map(json_val_to_sea_value)
+                    .unwrap_or(Value::BigInt(None))
             })
+            .collect();
+
+        let placeholders: Vec<String> = (1..=values.len())
+            .map(|i| format!("${}", i))
             .collect();
 
         let sql = format!(
             "INSERT INTO \"{}\" ({}) VALUES ({}) RETURNING *",
             Self::table_name(),
             cols.join(", "),
-            vals.join(", ")
+            placeholders.join(", ")
         );
 
+        let stmt = Statement::from_sql_and_values(backend, &sql, values);
         let rows = db
-            .query_all_raw(Statement::from_string(backend, sql))
+            .query_all_raw(stmt)
             .await
             .map_err(RavelEloquentError::Database)?;
         crate::query::row_to_model(
@@ -339,24 +365,28 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
             return Ok(0);
         }
         let pk_col = Self::id_column();
-        let quoted: Vec<String> = id_values.iter().map(crate::query::quote_value).collect();
+        let placeholders: Vec<String> = (1..=id_values.len())
+            .map(|i| format!("${}", i))
+            .collect();
         let sql = if let Some(del_col) = Self::soft_delete_column() {
             format!(
-                "UPDATE \"{}\" SET \"{}\" = datetime('now') WHERE \"{}\" IN ({})",
+                "UPDATE \"{}\" SET \"{}\" = CURRENT_TIMESTAMP WHERE \"{}\" IN ({})",
                 Self::table_name(),
                 del_col,
                 pk_col,
-                quoted.join(", "),
+                placeholders.join(", "),
             )
         } else {
             format!(
                 "DELETE FROM \"{}\" WHERE \"{}\" IN ({})",
                 Self::table_name(),
                 pk_col,
-                quoted.join(", "),
+                placeholders.join(", "),
             )
         };
-        let result = db.execute_unprepared(&sql).await.map_err(RavelEloquentError::Database)?;
+        let backend = db.get_database_backend();
+        let stmt = Statement::from_sql_and_values(backend, &sql, id_values);
+        let result = db.execute(&StmtExec(stmt)).await.map_err(RavelEloquentError::Database)?;
         Ok(result.rows_affected())
     }
 
@@ -380,32 +410,47 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
         // Collect local-key values from the parent models.
         let ids: Vec<String> = items
             .iter()
-            .map(|item| {
-                let json = serde_json::to_value(item).unwrap();
-                let id_val = json.get(meta.local_key).unwrap();
-                match id_val {
+            .map(|item| -> Result<String> {
+                let json = serde_json::to_value(item)?;
+                let id_val = json.get(meta.local_key).ok_or_else(|| {
+                    RavelEloquentError::Other(format!(
+                        "Key '{}' not found in serialized model",
+                        meta.local_key
+                    ).into())
+                })?;
+                Ok(match id_val {
                     serde_json::Value::Number(n) => n.to_string(),
                     serde_json::Value::String(s) => s.clone(),
                     serde_json::Value::Bool(b) => b.to_string(),
                     _ => id_val.to_string(),
-                }
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         if ids.is_empty() {
             return Ok(());
         }
 
-        let in_vals: Vec<String> = ids.iter().map(|id| format!("'{}'", id.replace('\'', "''"))).collect();
-        let in_clause = in_vals.join(", ");
+        let in_vals: Vec<Value> = ids
+            .iter()
+            .map(|id| {
+                id.parse::<i64>()
+                    .map(|i| Value::BigInt(Some(i)))
+                    .unwrap_or_else(|_| Value::String(Some(id.clone().into())))
+            })
+            .collect();
+        let pivot_placeholders: Vec<String> = (1..=in_vals.len())
+            .map(|i| format!("${}", i))
+            .collect();
 
         // Step 1: query the pivot table for (parent_id, related_id) pairs.
         let pivot_sql = format!(
             "SELECT \"{}\", \"{}\" FROM \"{}\" WHERE \"{}\" IN ({})",
-            pivot_fk, pivot_rk, pivot_table, pivot_fk, in_clause
+            pivot_fk, pivot_rk, pivot_table, pivot_fk, pivot_placeholders.join(", ")
         );
+        let pivot_stmt = Statement::from_sql_and_values(db.get_database_backend(), &pivot_sql, in_vals.clone());
         let pivot_rows = db
-            .query_all_raw(Statement::from_string(db.get_database_backend(), pivot_sql))
+            .query_all_raw(pivot_stmt)
             .await
             .map_err(RavelEloquentError::Database)?;
 
@@ -422,29 +467,42 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
         }
 
         if all_related_ids.is_empty() {
-            let mut json_values: Vec<serde_json::Value> =
-                items.iter().map(|i| serde_json::to_value(i).unwrap()).collect();
+            let mut json_values: Vec<serde_json::Value> = items
+                .iter()
+                .map(|i| serde_json::to_value(i))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
             let rel_name = meta.field_name;
             for val in &mut json_values {
-                val[rel_name] = serde_json::to_value(Vec::<serde_json::Value>::new()).unwrap();
+                val[rel_name] = serde_json::to_value(Vec::<serde_json::Value>::new())?;
             }
             let new_items: Vec<Self> = json_values
                 .iter()
-                .map(|v| serde_json::from_value(v.clone()).unwrap())
-                .collect();
+                .map(|v| serde_json::from_value(v.clone()))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
             *items = new_items;
             return Ok(());
         }
 
         // Step 2: query the related table for all related records.
-        let rk_in: Vec<String> = all_related_ids.iter().map(|id| format!("'{}'", id.replace('\'', "''"))).collect();
+        let rk_values: Vec<Value> = all_related_ids
+            .iter()
+            .map(|id| {
+                id.parse::<i64>()
+                    .map(|i| Value::BigInt(Some(i)))
+                    .unwrap_or_else(|_| Value::String(Some(id.clone().into())))
+            })
+            .collect();
+        let rk_placeholders: Vec<String> = (1..=rk_values.len())
+            .map(|i| format!("${}", i))
+            .collect();
         let related_pk_col = columns.first().unwrap_or(&"id");
         let related_sql = format!(
             "SELECT * FROM \"{}\" WHERE \"{}\" IN ({})",
-            meta.table_name, related_pk_col, rk_in.join(", ")
+            meta.table_name, related_pk_col, rk_placeholders.join(", ")
         );
+        let related_stmt = Statement::from_sql_and_values(db.get_database_backend(), &related_sql, rk_values);
         let related_rows = db
-            .query_all_raw(Statement::from_string(db.get_database_backend(), related_sql))
+            .query_all_raw(related_stmt)
             .await
             .map_err(RavelEloquentError::Database)?;
 
@@ -456,7 +514,13 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
                 let val = crate::query::try_extract(&row, i);
                 map.insert(col_name.to_string(), val);
             }
-            let rid = match map.get(*related_pk_col).unwrap() {
+            let rid_val = map.get(*related_pk_col).ok_or_else(|| {
+                RavelEloquentError::Other(format!(
+                    "Primary key '{}' not found in related row",
+                    related_pk_col,
+                ).into())
+            })?;
+            let rid = match rid_val {
                 serde_json::Value::Number(n) => n.to_string(),
                 serde_json::Value::String(s) => s.clone(),
                 other => other.to_string(),
@@ -465,11 +529,19 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
         }
 
         // Step 3: group by parent, injecting into the JSON values.
-        let mut json_values: Vec<serde_json::Value> =
-            items.iter().map(|i| serde_json::to_value(i).unwrap()).collect();
+        let mut json_values: Vec<serde_json::Value> = items
+            .iter()
+            .map(|i| serde_json::to_value(i))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
         let rel_name = meta.field_name;
         for val in &mut json_values {
-            let pid = match val.get(meta.local_key).unwrap() {
+            let pid_val = val.get(meta.local_key).ok_or_else(|| {
+                RavelEloquentError::Other(format!(
+                    "Local key '{}' not found in serialized parent model",
+                    meta.local_key
+                ).into())
+            })?;
+            let pid = match pid_val {
                 serde_json::Value::Number(n) => n.to_string(),
                 serde_json::Value::String(s) => s.clone(),
                 other => other.to_string(),
@@ -482,13 +554,13 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
                         .collect()
                 })
                 .unwrap_or_default();
-            val[rel_name] = serde_json::to_value(rel_items).unwrap();
+            val[rel_name] = serde_json::to_value(rel_items)?;
         }
 
         let new_items: Vec<Self> = json_values
             .iter()
-            .map(|v| serde_json::from_value(v.clone()).unwrap())
-            .collect();
+            .map(|v| serde_json::from_value(v.clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
         *items = new_items;
 
         Ok(())
@@ -518,18 +590,24 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
         })?;
 
         let data = serde_json::to_value(self)?;
-        let parent_id = crate::query::quote_value(&{
-            let v = data.get(meta.local_key).unwrap();
-            json_val_to_sea_value(v)
-        });
+        let parent_id_val = json_val_to_sea_value(data.get(meta.local_key).ok_or_else(|| {
+            RavelEloquentError::Other(format!(
+                "Local key '{}' not found — model may be missing the pk field",
+                meta.local_key,
+            ).into())
+        })?);
 
+        let backend = db.get_database_backend();
         for rid in related_ids {
-            let quoted = crate::query::quote_value(&rid.clone().into());
             let sql = format!(
-                "INSERT OR IGNORE INTO \"{}\" (\"{}\", \"{}\") VALUES ({}, {})",
-                pivot_table, pivot_fk, pivot_rk, parent_id, quoted
+                "INSERT OR IGNORE INTO \"{}\" (\"{}\", \"{}\") VALUES ($1, $2)",
+                pivot_table, pivot_fk, pivot_rk
             );
-            db.execute_unprepared(&sql)
+            let stmt = Statement::from_sql_and_values(
+                backend, &sql,
+                [parent_id_val.clone(), rid.clone().into()],
+            );
+            db.execute(&StmtExec(stmt))
                 .await
                 .map_err(RavelEloquentError::Database)?;
         }
@@ -557,20 +635,35 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
             RavelEloquentError::Other("BelongsToMany requires pivot_related_key".into())
         })?;
         let data = serde_json::to_value(self)?;
-        let parent_quoted = crate::query::quote_value(&json_val_to_sea_value(data.get(meta.local_key).unwrap()));
+        let parent_id_val = json_val_to_sea_value(data.get(meta.local_key).ok_or_else(|| {
+            RavelEloquentError::Other(format!(
+                "Local key '{}' not found — model may be missing the pk field",
+                meta.local_key,
+            ).into())
+        })?);
 
-        let quoted_ids: Vec<String> = related_ids
+        let relate_values: Vec<Value> = related_ids
             .iter()
-            .map(|id| crate::query::quote_value(&id.clone().into()))
+            .map(|id| id.clone().into())
             .collect();
-        if quoted_ids.is_empty() {
+        if relate_values.is_empty() {
             return Ok(0);
         }
+
+        let rk_placeholders: Vec<String> = (2..=relate_values.len() + 1)
+            .map(|i| format!("${}", i))
+            .collect();
         let sql = format!(
-            "DELETE FROM \"{}\" WHERE \"{}\" = {} AND \"{}\" IN ({})",
-            pivot_table, pivot_fk, parent_quoted, pivot_rk, quoted_ids.join(", "),
+            "DELETE FROM \"{}\" WHERE \"{}\" = $1 AND \"{}\" IN ({})",
+            pivot_table, pivot_fk, pivot_rk, rk_placeholders.join(", "),
         );
-        let result = db.execute_unprepared(&sql).await.map_err(RavelEloquentError::Database)?;
+
+        let mut all_values: Vec<Value> = vec![parent_id_val];
+        all_values.extend(relate_values);
+
+        let backend = db.get_database_backend();
+        let stmt = Statement::from_sql_and_values(backend, &sql, all_values);
+        let result = db.execute(&StmtExec(stmt)).await.map_err(RavelEloquentError::Database)?;
         Ok(result.rows_affected())
     }
 
@@ -595,24 +688,34 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
         let pivot_rk = meta.pivot_related_key.ok_or_else(|| {
             RavelEloquentError::Other("BelongsToMany requires pivot_related_key".into())
         })?;
-        let parent_id_val = json_val_to_sea_value(data.get(meta.local_key).unwrap());
+        let parent_id_val = json_val_to_sea_value(data.get(meta.local_key).ok_or_else(|| {
+            RavelEloquentError::Other(format!(
+                "Local key '{}' not found — model may be missing the pk field",
+                meta.local_key,
+            ).into())
+        })?);
+        let backend = db.get_database_backend();
 
         // Delete all existing pivot rows for this parent.
-        let del_sql_with_val = format!(
-            "DELETE FROM \"{}\" WHERE \"{}\" = {}",
-            pivot_table, pivot_fk, crate::query::quote_value(&parent_id_val),
+        let del_sql = format!(
+            "DELETE FROM \"{}\" WHERE \"{}\" = $1",
+            pivot_table, pivot_fk,
         );
-        db.execute_unprepared(&del_sql_with_val).await.map_err(RavelEloquentError::Database)?;
+        let del_stmt = Statement::from_sql_and_values(
+            backend, &del_sql, [parent_id_val.clone()]);
+        db.execute(&StmtExec(del_stmt)).await.map_err(RavelEloquentError::Database)?;
 
         // Insert new pivots.
         for rid in related_ids {
-            let quoted = crate::query::quote_value(&rid.clone().into());
-            let quoted_parent = crate::query::quote_value(&parent_id_val);
             let ins_sql = format!(
-                "INSERT INTO \"{}\" (\"{}\", \"{}\") VALUES ({}, {})",
-                pivot_table, pivot_fk, pivot_rk, quoted_parent, quoted
+                "INSERT INTO \"{}\" (\"{}\", \"{}\") VALUES ($1, $2)",
+                pivot_table, pivot_fk, pivot_rk
             );
-            db.execute_unprepared(&ins_sql)
+            let ins_stmt = Statement::from_sql_and_values(
+                backend, &ins_sql,
+                [parent_id_val.clone(), rid.clone().into()],
+            );
+            db.execute(&StmtExec(ins_stmt))
                 .await
                 .map_err(RavelEloquentError::Database)?;
         }
@@ -642,30 +745,48 @@ pub trait ActiveModelExt: ModelExt {
             }
             Self::create(data, db).await
         } else {
-            let sets: Vec<_> = Self::columns()
+            let cols: Vec<&&str> = Self::columns()
                 .iter()
                 .filter(|c| **c != id_col)
+                .collect();
+            let pairs: Vec<(&str, Value)> = cols
+                .iter()
                 .filter_map(|c| {
-                    data.get(c)
-                        .map(|v| format!("\"{}\" = {}", c, quote_json_value(v)))
+                    data.get(**c).map(|v| (**c, json_val_to_sea_value(v)))
                 })
                 .collect();
 
-            if sets.is_empty() {
+            if pairs.is_empty() {
                 return Ok(self);
             }
 
-            let id_val = data.get(id_col).unwrap();
-            let id_str = quote_json_value(id_val);
+            let set_clauses: Vec<String> = pairs.iter()
+                .enumerate()
+                .map(|(i, (col, _))| format!("\"{}\" = ${}", col, i + 1))
+                .collect();
+
+            let id_val = data.get(id_col).ok_or_else(|| {
+                RavelEloquentError::Other(format!(
+                    "Primary key '{}' not found in serialized model data",
+                    id_col,
+                ).into())
+            })?;
+            let id_sea_val = json_val_to_sea_value(id_val);
+            let id_placeholder = format!("${}", pairs.len() + 1);
 
             let sql = format!(
                 "UPDATE \"{}\" SET {} WHERE \"{}\" = {}",
                 Self::table_name(),
-                sets.join(", "),
+                set_clauses.join(", "),
                 id_col,
-                id_str,
+                id_placeholder,
             );
-            db.execute_unprepared(&sql)
+
+            let mut all_values: Vec<Value> = pairs.into_iter().map(|(_, v)| v).collect();
+            all_values.push(id_sea_val);
+
+            let stmt = Statement::from_sql_and_values(db.get_database_backend(), &sql, all_values);
+            db.execute(&StmtExec(stmt))
                 .await
                 .map_err(RavelEloquentError::Database)?;
 
@@ -700,7 +821,7 @@ pub trait ActiveModelExt: ModelExt {
     }
 
     /// DELETE the row. Consumes self.
-    /// If soft deletes are enabled, sets `deleted_at = datetime('now')` instead.
+    /// If soft deletes are enabled, sets `deleted_at = CURRENT_TIMESTAMP` instead.
     /// Use `force_delete()` to bypass soft delete.
     async fn delete(self, db: &DatabaseConnection) -> Result<()> {
         let data = serde_json::to_value(&self)?;
@@ -708,26 +829,29 @@ pub trait ActiveModelExt: ModelExt {
         let id_val = data
             .get(id_col)
             .ok_or_else(|| RavelEloquentError::Other("Cannot delete: missing id".into()))?;
+        let id_sea_val = json_val_to_sea_value(id_val);
 
         if let Some(del_col) = Self::soft_delete_column() {
             let sql = format!(
-                "UPDATE \"{}\" SET \"{}\" = datetime('now') WHERE \"{}\" = {}",
+                "UPDATE \"{}\" SET \"{}\" = CURRENT_TIMESTAMP WHERE \"{}\" = $1",
                 Self::table_name(),
                 del_col,
                 id_col,
-                quote_json_value(id_val),
             );
-            db.execute_unprepared(&sql)
+            let stmt = Statement::from_sql_and_values(
+                db.get_database_backend(), &sql, [id_sea_val]);
+            db.execute(&StmtExec(stmt))
                 .await
                 .map_err(RavelEloquentError::Database)?;
         } else {
             let sql = format!(
-                "DELETE FROM \"{}\" WHERE \"{}\" = {}",
+                "DELETE FROM \"{}\" WHERE \"{}\" = $1",
                 Self::table_name(),
                 id_col,
-                quote_json_value(id_val),
             );
-            db.execute_unprepared(&sql)
+            let stmt = Statement::from_sql_and_values(
+                db.get_database_backend(), &sql, [id_sea_val]);
+            db.execute(&StmtExec(stmt))
                 .await
                 .map_err(RavelEloquentError::Database)?;
         }
@@ -741,14 +865,16 @@ pub trait ActiveModelExt: ModelExt {
         let id_val = data
             .get(id_col)
             .ok_or_else(|| RavelEloquentError::Other("Cannot force delete: missing id".into()))?;
+        let id_sea_val = json_val_to_sea_value(id_val);
 
         let sql = format!(
-            "DELETE FROM \"{}\" WHERE \"{}\" = {}",
+            "DELETE FROM \"{}\" WHERE \"{}\" = $1",
             Self::table_name(),
             id_col,
-            quote_json_value(id_val),
         );
-        db.execute_unprepared(&sql)
+        let stmt = Statement::from_sql_and_values(
+            db.get_database_backend(), &sql, [id_sea_val]);
+        db.execute(&StmtExec(stmt))
             .await
             .map_err(RavelEloquentError::Database)?;
         Ok(())
@@ -764,15 +890,17 @@ pub trait ActiveModelExt: ModelExt {
         let id_val = data
             .get(id_col)
             .ok_or_else(|| RavelEloquentError::Other("Cannot restore: missing id".into()))?;
+        let id_sea_val = json_val_to_sea_value(id_val);
 
         let sql = format!(
-            "UPDATE \"{}\" SET \"{}\" = NULL WHERE \"{}\" = {}",
+            "UPDATE \"{}\" SET \"{}\" = NULL WHERE \"{}\" = $1",
             Self::table_name(),
             del_col,
             id_col,
-            quote_json_value(id_val),
         );
-        db.execute_unprepared(&sql)
+        let stmt = Statement::from_sql_and_values(
+            db.get_database_backend(), &sql, [id_sea_val]);
+        db.execute(&StmtExec(stmt))
             .await
             .map_err(RavelEloquentError::Database)?;
 
@@ -845,14 +973,16 @@ pub trait HasTimestamps: ActiveModelExt {
         let id_val = data
             .get(id_col)
             .ok_or_else(|| RavelEloquentError::Other("Cannot touch: missing id".into()))?;
+        let id_sea_val = json_val_to_sea_value(id_val);
 
         let sql = format!(
-            "UPDATE \"{}\" SET \"updated_at\" = datetime('now') WHERE \"{}\" = {}",
+            "UPDATE \"{}\" SET \"updated_at\" = CURRENT_TIMESTAMP WHERE \"{}\" = $1",
             Self::table_name(),
             id_col,
-            quote_json_value(id_val),
         );
-        db.execute_unprepared(&sql)
+        let stmt = Statement::from_sql_and_values(
+            db.get_database_backend(), &sql, [id_sea_val]);
+        db.execute(&StmtExec(stmt))
             .await
             .map_err(RavelEloquentError::Database)?;
 
@@ -868,17 +998,21 @@ pub trait HasTimestamps: ActiveModelExt {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
-fn quote_json_value(v: &serde_json::Value) -> String {
-    match v {
-        serde_json::Value::Null => "NULL".to_string(),
-        serde_json::Value::Bool(b) => (if *b { "TRUE" } else { "FALSE" }).to_string(),
-        serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::String(s) => format!("'{}'", s.replace('\'', "''")),
-        _ => format!("'{}'", v),
+/// Adapter: wraps a `Statement` so it implements `StatementBuilder`.
+/// SeaORM 2.0-rc's `ConnectionTrait::execute()` requires `StatementBuilder`
+/// but `Statement` itself doesn't implement it.  This wrapper is the
+/// trivially-correct zero-cost bridge.
+use sea_orm::StatementBuilder;
+
+struct StmtExec(Statement);
+
+impl StatementBuilder for StmtExec {
+    fn build(&self, _db_backend: &sea_orm::DbBackend) -> Statement {
+        self.0.clone()
     }
 }
 
-/// Convert a `serde_json::Value` to `sea_orm::Value` for use with `Self::find()`.
+/// Convert a `serde_json::Value` to `sea_orm::Value` for use with parameterized queries.
 fn json_val_to_sea_value(v: &serde_json::Value) -> Value {
     match v {
         serde_json::Value::Null => Value::BigInt(None),

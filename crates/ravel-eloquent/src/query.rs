@@ -414,28 +414,6 @@ pub type Page<T> = ravel_db_core::pagination::Page<T>;
 
 // ── SQL helpers (kept for relations.rs and ModelExt) ───────────────────
 
-pub(crate) fn quote_value(v: &Value) -> String {
-    match v {
-        Value::BigInt(Some(i)) => i.to_string(),
-        Value::Int(Some(i)) => i.to_string(),
-        Value::SmallInt(Some(i)) => i.to_string(),
-        Value::TinyInt(Some(i)) => i.to_string(),
-        Value::Float(Some(f)) => f.to_string(),
-        Value::Double(Some(f)) => f.to_string(),
-        Value::Bool(Some(b)) => (if *b { "TRUE" } else { "FALSE" }).to_string(),
-        Value::String(Some(s)) => format!("'{}'", s.replace('\'', "''")),
-        Value::Char(Some(c)) => format!("'{}'", c),
-        Value::Uuid(Some(u)) => format!("'{}'", u),
-        Value::ChronoDate(Some(d)) => format!("'{}'", d),
-        Value::ChronoDateTime(Some(dt)) => format!("'{}'", dt),
-        Value::ChronoDateTimeUtc(Some(dt)) => format!("'{}'", dt),
-        Value::Decimal(Some(d)) => format!("'{}'", d),
-        Value::BigUnsigned(Some(u)) => u.to_string(),
-        Value::Unsigned(Some(u)) => u.to_string(),
-        _ => "NULL".to_string(),
-    }
-}
-
 pub(crate) fn row_to_model<T: DeserializeOwned>(
     row: &sea_orm::QueryResult,
     cols: &[&str],
