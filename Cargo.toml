@@ -14,7 +14,6 @@ members = [
     "crates/ravel-support",
     "crates/ravel-facades",
     "crates/ravel-test",
-    "testblog"
 ]
 
 resolver = "2"

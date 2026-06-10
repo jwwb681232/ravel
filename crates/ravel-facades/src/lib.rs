@@ -2,7 +2,7 @@
 //!
 //! All facades are usable after Application::boot() has completed.
 
-pub mod auth;
+// Core facades — always available
 pub mod cache;
 pub mod collection;
 pub mod config;
@@ -10,40 +10,58 @@ pub mod crypt;
 pub mod hash;
 pub mod log;
 pub mod path;
-pub mod queue;
-pub mod request;
-pub mod response;
-pub mod route;
-pub mod session;
-pub mod storage;
 pub mod utils;
 
-// ── Re-exports for convenience ───────────────────────────────────────
-pub use auth::Auth;
+// HTTP facades — requires `http` feature
+#[cfg(feature = "http")]
+pub mod auth;
+#[cfg(feature = "http")]
+pub mod request;
+#[cfg(feature = "http")]
+pub mod response;
+#[cfg(feature = "http")]
+pub mod route;
+#[cfg(feature = "http")]
+pub mod session;
+
+// Support facades — requires `support` feature
+#[cfg(feature = "support")]
+pub mod queue;
+#[cfg(feature = "support")]
+pub mod storage;
+
+// ── Core re-exports ────────────────────────────────────────────────
 pub use cache::Cache;
 pub use collection::Collection;
 pub use config::Config;
 pub use crypt::Crypt;
 pub use hash::Hash;
 pub use log::Log;
-pub use queue::Queue;
-pub use route::Route;
-pub use session::Session;
-pub use storage::Storage;
-
-// Re-export utility functions at crate root.
 pub use utils::{env, env_or, now};
 
-// Re-export response helpers at crate root.
-// Note: `response` the function is not re-exported here to avoid a naming
-// conflict with the `response` module — use `response::response()` instead.
+// ── HTTP re-exports ────────────────────────────────────────────────
+#[cfg(feature = "http")]
+pub use auth::Auth;
+#[cfg(feature = "http")]
+pub use route::Route;
+#[cfg(feature = "http")]
+pub use session::Session;
+#[cfg(feature = "http")]
 pub use response::{abort, back, redirect};
 
-/// Extension trait for Application to register services from ravel-support.
+// ── Support re-exports ───────────────────────────────────────────
+#[cfg(feature = "support")]
+pub use queue::Queue;
+#[cfg(feature = "support")]
+pub use storage::Storage;
+
+// ── ApplicationExt ─────────────────────────────────────────────────
+#[cfg(feature = "support")]
 pub trait ApplicationExt: Sized {
     fn with_queue(self) -> Self;
 }
 
+#[cfg(feature = "support")]
 impl ApplicationExt for ravel_core::app::Application {
     fn with_queue(self) -> Self {
         use ravel_support::queue::Queue;

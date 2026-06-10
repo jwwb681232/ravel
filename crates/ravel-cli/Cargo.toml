@@ -13,7 +13,6 @@ readme = "../../README.md"
 
 [dependencies]
 ravel-generator = { path = "../ravel-generator" }
-ravel-db-seaorm = { path = "../ravel-db-seaorm" }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }

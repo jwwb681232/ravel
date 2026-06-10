@@ -7,13 +7,56 @@
 //! and uses the Migrator registered in `database/migrations/mod.rs`.
 
 use anyhow::Result;
+use std::path::Path;
 use std::process::Command;
 
+/// Check whether a cargo bin target named `name` exists.
+///
+/// Looks for `src/bin/<name>.rs` or an explicit `[[bin]]` entry in Cargo.toml.
+fn find_bin(name: &str) -> Option<String> {
+    // 1. Check src/bin/name.rs
+    let bin_path = format!("src/bin/{name}.rs");
+    if Path::new(&bin_path).exists() {
+        return Some(name.to_string());
+    }
+
+    // 2. Scan Cargo.toml for [[bin]] entries
+    let cargo_path = Path::new("Cargo.toml");
+    if !cargo_path.exists() {
+        return None;
+    }
+    let content = std::fs::read_to_string(cargo_path).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        // Match patterns like: name = "migrate" or name = "migrate"
+        if trimmed.starts_with("name = ") {
+            if let Some(quoted) = trimmed.strip_prefix("name = \"") {
+                if let Some(quoted_name) = quoted.strip_suffix('"') {
+                    if quoted_name == name {
+                        return Some(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 fn run_migrate(args: &[&str]) -> Result<()> {
+    let bin_name = find_bin("migrate").ok_or_else(|| {
+        anyhow::anyhow!(
+            "No 'migrate' binary found.\n\
+             \n\
+             Run `ravel new <name>` to create a project, or manually create\n\
+             src/bin/migrate.rs (see `ravel new` template)."
+        )
+    })?;
+
     let status = Command::new("cargo")
         .arg("run")
         .arg("--bin")
-        .arg("migrate")
+        .arg(&bin_name)
         .arg("--")
         .args(args)
         .status()?;
