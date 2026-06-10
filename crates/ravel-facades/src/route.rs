@@ -8,6 +8,20 @@ use std::sync::OnceLock;
 
 static REGISTRY: OnceLock<Mutex<Option<RouteState>>> = OnceLock::new();
 
+/// Collected route metadata for introspection (e.g. `ravel route:list`).
+static ROUTE_LIST: OnceLock<Mutex<Vec<RouteEntry>>> = OnceLock::new();
+
+fn route_list() -> &'static Mutex<Vec<RouteEntry>> {
+    ROUTE_LIST.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// A single registered route entry.
+#[derive(Debug, Clone)]
+pub struct RouteEntry {
+    pub method: String,
+    pub path: String,
+}
+
 struct RouteState {
     router: Router,
     group_stack: Vec<String>,
@@ -42,6 +56,24 @@ impl Route {
         }
     }
 
+    /// Record a route entry for introspection.
+    fn record(method: &'static str, path: &str) {
+        route_list().lock().push(RouteEntry {
+            method: method.to_string(),
+            path: path.to_string(),
+        });
+    }
+
+    /// Return all registered routes.
+    pub fn list() -> Vec<RouteEntry> {
+        route_list().lock().clone()
+    }
+
+    /// Clear the route list (done automatically by `reset()`).
+    fn clear_list() {
+        route_list().lock().clear();
+    }
+
     pub fn get<H, T>(path: &str, handler: H)
     where
         H: axum::handler::Handler<T, ()>,
@@ -49,6 +81,7 @@ impl Route {
     {
         Self::with_router(|state| {
             let full = Self::full_path(state, path);
+            Self::record("GET", &full);
             state.router = state.router.clone().route(&full, routing::get(handler));
         });
     }
@@ -60,6 +93,7 @@ impl Route {
     {
         Self::with_router(|state| {
             let full = Self::full_path(state, path);
+            Self::record("POST", &full);
             state.router = state.router.clone().route(&full, routing::post(handler));
         });
     }
@@ -71,6 +105,7 @@ impl Route {
     {
         Self::with_router(|state| {
             let full = Self::full_path(state, path);
+            Self::record("PUT", &full);
             state.router = state.router.clone().route(&full, routing::put(handler));
         });
     }
@@ -82,6 +117,7 @@ impl Route {
     {
         Self::with_router(|state| {
             let full = Self::full_path(state, path);
+            Self::record("DELETE", &full);
             state.router = state.router.clone().route(&full, routing::delete(handler));
         });
     }
@@ -93,6 +129,7 @@ impl Route {
     {
         Self::with_router(|state| {
             let full = Self::full_path(state, path);
+            Self::record("PATCH", &full);
             state.router = state.router.clone().route(&full, routing::patch(handler));
         });
     }
@@ -101,7 +138,6 @@ impl Route {
         Self::with_router(|state| {
             state.group_stack.push(prefix.to_string());
         });
-        // Use a guard to ensure the group prefix is popped even if f() panics.
         struct GroupGuard;
         impl Drop for GroupGuard {
             fn drop(&mut self) {
@@ -131,12 +167,6 @@ impl Route {
         });
     }
 
-    /// Build the final Router and reset the registry for the next cycle.
-    ///
-    /// Unlike the old `Route::build()`, this does **not** permanently consume
-    /// the registry. It clones the accumulated router and clears the internal
-    /// state so the next batch of `Route::get()/post()` calls can be
-    /// registered.  This makes it safe to call from multiple test cases.
     pub fn build() -> Router {
         let mut guard = registry().lock();
         let state = guard.as_mut().expect("Route registry not available");
@@ -146,14 +176,12 @@ impl Route {
         router
     }
 
-    /// Clear all registered routes so a fresh batch can be registered.
-    ///
-    /// Useful between test cases that share the same process.
     pub fn reset() {
         let mut guard = registry().lock();
         if let Some(state) = guard.as_mut() {
             state.router = Router::new();
             state.group_stack.clear();
         }
+        Self::clear_list();
     }
 }
