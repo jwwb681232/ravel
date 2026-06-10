@@ -13,7 +13,6 @@ readme = "../../README.md"
 
 [dependencies]
 ravel-core = { path = "../ravel-core" }
-ravel-db-core = { path = "../ravel-db-core" }
 sea-orm = "2.0.0-rc.40"
 sea-orm-migration = "2.0.0-rc.40"
 serde = { version = "1", features = ["derive"] }

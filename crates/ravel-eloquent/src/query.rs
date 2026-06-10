@@ -410,7 +410,7 @@ impl QueryBuilder {
 
 // ── Pagination ─────────────────────────────────────────────────────────
 
-pub type Page<T> = ravel_db_core::pagination::Page<T>;
+pub type Page<T> = ravel_db_seaorm::Page<T>;
 
 // ── SQL helpers (kept for relations.rs and ModelExt) ───────────────────
 

@@ -18,7 +18,7 @@
 //! ```
 
 use anyhow::Result;
-use ravel_db_core::pagination::Page;
+use crate::page::Page;
 use sea_orm::{DatabaseConnection, PaginatorTrait, Select};
 
 /// Build a paginated query.

@@ -24,7 +24,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use parking_lot::RwLock;
-use ravel_db_core::connection::ConnectionManager as ConnectionManagerTrait;
+use crate::traits::ConnectionManager as ConnectionManagerTrait;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use std::collections::HashMap;
 use std::path::Path;
