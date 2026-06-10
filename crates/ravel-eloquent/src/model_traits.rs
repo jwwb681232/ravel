@@ -74,7 +74,7 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
         let id_val: Value = id.into();
         let backend = db.get_database_backend();
         let raw_sql = format!(
-            "SELECT * FROM \"{}\" WHERE \"{}\" = $1{}",
+            "SELECT * FROM \"{}\" WHERE \"{}\" = $1{} LIMIT 1",
             Self::table_name(),
             Self::id_column(),
             match Self::soft_delete_column() {
