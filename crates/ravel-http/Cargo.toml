@@ -29,7 +29,12 @@ rand = "0.8"
 base64 = "0.22"
 hmac = "0.12"
 sha2 = "0.10"
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+redis = { version = "0.25", features = ["tokio-comp"], optional = true }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+
+[[test]]
+name = "session_redis"
+required-features = ["redis"]

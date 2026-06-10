@@ -33,6 +33,32 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tower::Layer;
+use uuid::Uuid;
+
+// ── Session backend ─────────────────────────────────────────────────────
+
+/// Where session data is stored.
+#[derive(Clone)]
+enum SessionBackend {
+    /// Data encrypted directly in the cookie (no server-side storage).
+    Cookie,
+    /// Session ID in cookie, data in Redis.
+    #[cfg(feature = "redis")]
+    Redis {
+        client: redis::Client,
+        prefix: String,
+    },
+}
+
+impl std::fmt::Debug for SessionBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Cookie => write!(f, "Cookie"),
+            #[cfg(feature = "redis")]
+            Self::Redis { prefix, .. } => write!(f, "Redis({prefix})"),
+        }
+    }
+}
 
 // ── Session data ────────────────────────────────────────────────────────
 
@@ -84,16 +110,40 @@ pub struct SessionConfig {
     crypt: Arc<Crypt>,
     cookie_name: String,
     max_age_secs: u64,
+    backend: SessionBackend,
 }
 
 impl SessionConfig {
-    /// Create a new session config with the given encrypter.
+    /// Create a new session config with encrypted-cookie storage.
     pub fn new(crypt: Crypt) -> Self {
         Self {
             crypt: Arc::new(crypt),
             cookie_name: "ravel_session".into(),
-            max_age_secs: 7200, // 2 hours
+            max_age_secs: 7200,
+            backend: SessionBackend::Cookie,
         }
+    }
+
+    /// Create a session config backed by Redis.
+    ///
+    /// Data is stored in Redis under `ravel:session:{id}` keys.
+    /// Only the session ID (a UUID) is placed in the cookie.
+    /// Enable with `features = ["redis"]`.
+    #[cfg(feature = "redis")]
+    pub async fn redis(url: &str, crypt: Crypt) -> anyhow::Result<Self> {
+        let client = redis::Client::open(url)?;
+        // Verify connectivity
+        let mut conn = client.get_multiplexed_async_connection().await?;
+        redis::cmd("PING").query_async::<_, String>(&mut conn).await?;
+        Ok(Self {
+            crypt: Arc::new(crypt),
+            cookie_name: "ravel_session".into(),
+            max_age_secs: 7200,
+            backend: SessionBackend::Redis {
+                client,
+                prefix: "ravel:session".into(),
+            },
+        })
     }
 
     /// Set the session cookie name (default: "ravel_session").
@@ -115,6 +165,11 @@ impl SessionConfig {
         }
     }
 
+    /// Generate a fresh session ID (UUID v4).
+    pub fn generate_id() -> String {
+        Uuid::new_v4().to_string()
+    }
+
     fn read(&self, cookie_header: Option<&str>) -> SessionData {
         let raw = cookie_header.and_then(|h| {
             h.split(';')
@@ -123,21 +178,78 @@ impl SessionConfig {
                 .map(|v| v.to_string())
         });
 
-        match raw {
-            Some(encoded) => self
-                .crypt
-                .decrypt_value::<SessionData>(&encoded)
-                .unwrap_or_default(),
-            None => SessionData::default(),
+        match &self.backend {
+            SessionBackend::Cookie => match raw {
+                Some(encoded) => self
+                    .crypt
+                    .decrypt_value::<SessionData>(&encoded)
+                    .unwrap_or_default(),
+                None => SessionData::default(),
+            },
+            #[cfg(feature = "redis")]
+            SessionBackend::Redis { .. } => SessionData::default(), // loaded async in service
         }
     }
 
+    #[cfg(feature = "redis")]
+    pub async fn read_redis(&self, sid: &str) -> Option<SessionData> {
+        let (client, prefix) = match &self.backend {
+            SessionBackend::Redis { client, prefix } => (client, prefix),
+            _ => return None,
+        };
+        let mut conn = client.get_multiplexed_async_connection().await.ok()?;
+        let key = format!("{prefix}:{sid}");
+        let raw: Option<String> = redis::AsyncCommands::get(&mut conn, key).await.ok()?;
+        raw.and_then(|s| serde_json::from_str(&s).ok())
+    }
+
+    fn session_id_from_cookie(&self, cookie_header: Option<&str>) -> Option<String> {
+        cookie_header.and_then(|h| {
+            h.split(';')
+                .map(|p| p.trim())
+                .find_map(|p| p.strip_prefix(&format!("{}=", self.cookie_name)))
+                .map(|v| v.to_string())
+        })
+    }
+
+    fn is_redis(&self) -> bool {
+        #[cfg(feature = "redis")]
+        {
+            matches!(&self.backend, SessionBackend::Redis { .. })
+        }
+        #[cfg(not(feature = "redis"))]
+        false
+    }
+
     fn write(&self, data: &SessionData) -> String {
+        // Cookie backend path
         let encoded = self.crypt.encrypt_value(data).unwrap_or_default();
         format!(
             "{}={}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}",
             self.cookie_name, encoded, self.max_age_secs
         )
+    }
+
+    pub fn write_redis_cookie(&self, sid: &str) -> String {
+        format!(
+            "{}={}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}",
+            self.cookie_name, sid, self.max_age_secs
+        )
+    }
+
+    #[cfg(feature = "redis")]
+    pub async fn write_redis(&self, sid: &str, data: &SessionData) -> anyhow::Result<()> {
+        let (client, prefix) = match &self.backend {
+            SessionBackend::Redis { client, prefix } => (client, prefix),
+            _ => return Ok(()),
+        };
+        let mut conn = client.get_multiplexed_async_connection().await?;
+        let key = format!("{prefix}:{sid}");
+        let payload = serde_json::to_string(data)?;
+        let _: () = redis::AsyncCommands::set_ex(
+            &mut conn, key, payload, self.max_age_secs as u64,
+        ).await?;
+        Ok(())
     }
 }
 
@@ -192,23 +304,56 @@ where
         let mut inner = self.inner.clone();
 
         Box::pin(async move {
-            // 1. Read session from encrypted cookie
-            let cookie_header = req.headers().get("cookie").and_then(|v| v.to_str().ok());
-            let data = config.read(cookie_header);
+            let cookie_header = req
+                .headers()
+                .get("cookie")
+                .and_then(|v| v.to_str().ok());
 
-            // 2. Create shared state — this bridges the facade + extractor paths
+            // ── Load session ────────────────────────────────────
+            let (data, sid): (SessionData, Option<String>) = if config.is_redis() {
+                #[cfg(feature = "redis")]
+                {
+                    let raw_sid = config.session_id_from_cookie(cookie_header);
+                    let sid = raw_sid.unwrap_or_else(|| SessionConfig::generate_id());
+                    let data = config.read_redis(&sid).await.unwrap_or_default();
+                    (data, Some(sid))
+                }
+                #[cfg(not(feature = "redis"))]
+                (SessionData::default(), None)
+            } else {
+                (config.read(cookie_header), None)
+            };
+
+            // ── Create shared state ─────────────────────────────
             let state = Arc::new(SessionState::new(data));
             req.extensions_mut().insert(Arc::clone(&state));
 
-            // 3. Run the handler (and all downstream middleware)
+            // ── Run handler ─────────────────────────────────────
             let mut resp = inner.call(req).await?;
 
-            // 4. After handler: check if session was modified, write cookie
+            // ── Persist session ─────────────────────────────────
             if state.take_dirty() {
-                let final_data = state.data.lock().unwrap_or_else(|e| e.into_inner());
-                let cookie = config.write(&final_data);
-                if let Ok(header_value) = cookie.parse() {
-                    resp.headers_mut().insert("Set-Cookie", header_value);
+                if let Some(ref redis_sid) = sid {
+                    #[cfg(feature = "redis")]
+                    {
+                        let final_data = {
+                            state.data.lock().unwrap_or_else(|e| e.into_inner()).clone()
+                        };
+                        let _ = config.write_redis(redis_sid, &final_data).await;
+                        let cookie = config.write_redis_cookie(redis_sid);
+                        if let Ok(header_value) = cookie.parse() {
+                            resp.headers_mut().insert("Set-Cookie", header_value);
+                        }
+                    }
+                    #[cfg(not(feature = "redis"))]
+                    let _ = redis_sid;
+                } else {
+                    let final_data =
+                        state.data.lock().unwrap_or_else(|e| e.into_inner());
+                    let cookie = config.write(&final_data);
+                    if let Ok(header_value) = cookie.parse() {
+                        resp.headers_mut().insert("Set-Cookie", header_value);
+                    }
                 }
             }
 
