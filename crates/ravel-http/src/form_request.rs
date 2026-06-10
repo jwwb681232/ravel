@@ -4,10 +4,10 @@
 //! [`Validated<T>`](Validated) as an Axum extractor to get automatic
 //! JSON parsing + validation.
 //!
-//! # Usage
+//! # Quick start
 //!
 //! ```rust,ignore
-//! use ravel_http::form_request::{FormRequest, Validated};
+//! use ravel_http::form_request::{FormRequest, HasDb, Validated};
 //! use ravel_http::validation::{FieldRule, Rule};
 //! use serde::Deserialize;
 //!
@@ -15,20 +15,22 @@
 //! pub struct CreateUserRequest {
 //!     pub name: String,
 //!     pub email: String,
+//!     pub password: String,
 //! }
 //!
 //! impl FormRequest for CreateUserRequest {
 //!     fn rules() -> Vec<FieldRule> {
 //!         vec![
 //!             FieldRule::new("name", vec![Rule::Required, Rule::Min(3)]),
-//!             FieldRule::new("email", vec![Rule::Required, Rule::Email]),
+//!             FieldRule::new("email", vec![Rule::Required, Rule::Email,
+//!                 Rule::Unique { table: "users", column: "email", ignore_id: None }]),
+//!             FieldRule::new("password", vec![Rule::Required, Rule::Min(8), Rule::Confirmed]),
 //!         ]
 //!     }
 //! }
 //!
 //! // In your handler:
 //! async fn store(Validated(req): Validated<CreateUserRequest>) -> impl IntoResponse {
-//!     // req is guaranteed to be valid
 //!     format!("Hello, {}!", req.name)
 //! }
 //! ```
@@ -40,7 +42,7 @@
 //!     "message": "Validation failed",
 //!     "errors": {
 //!         "name": ["name is required"],
-//!         "email": ["email must be a valid email address"]
+//!         "email": ["email has already been taken"]
 //!     }
 //! }
 //! ```
@@ -49,11 +51,41 @@ use axum::Json;
 use axum::extract::{FromRequest, Request};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use sea_orm::DatabaseConnection;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 
 use crate::error::RavelError;
 use crate::validation::{FieldRule, Validator};
+
+/// Trait for application state that provides a database connection.
+///
+/// Implement this on your Axum `State` struct so that [`Validated<T>`](Validated)
+/// can run database-dependent validation rules (Unique, Exists).
+///
+/// ```rust,ignore
+/// #[derive(Clone)]
+/// struct AppState {
+///     db: DatabaseConnection,
+/// }
+///
+/// impl ravel_http::form_request::HasDb for AppState {
+///     fn db(&self) -> &DatabaseConnection { &self.db }
+/// }
+/// ```
+pub trait HasDb {
+    fn db(&self) -> &DatabaseConnection;
+}
+
+impl HasDb for () {
+    fn db(&self) -> &DatabaseConnection {
+        panic!(
+            "HasDb not implemented for your AppState.\n\
+             Implement ravel_http::form_request::HasDb on your State struct \
+             to use Unique / Exists validation rules."
+        )
+    }
+}
 
 /// Trait for validated request structs.
 ///
@@ -155,12 +187,12 @@ impl IntoResponse for FormRequestRejection {
 
 impl<S, T> FromRequest<S> for Validated<T>
 where
-    S: Send + Sync + 'static,
+    S: HasDb + Send + Sync + 'static,
     T: FormRequest,
 {
     type Rejection = RavelError;
 
-    async fn from_request(req: Request, _state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let (_parts, body) = req.into_parts();
         let bytes = axum::body::to_bytes(body, 1024 * 1024)
             .await
@@ -173,7 +205,16 @@ where
         let custom_messages = T::messages();
         let validator = Validator::new(rules);
 
-        let validation_result = if custom_messages.is_empty() {
+        let validation_result = if validator.has_async_rules() {
+            let db = state.db();
+            if custom_messages.is_empty() {
+                validator.validate_async(&json_value, db).await
+            } else {
+                validator
+                    .validate_async_with_messages(&json_value, &custom_messages, db)
+                    .await
+            }
+        } else if custom_messages.is_empty() {
             validator.validate(&json_value)
         } else {
             validator.validate_with_messages(&json_value, &custom_messages)
