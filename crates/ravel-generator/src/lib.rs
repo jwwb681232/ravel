@@ -487,15 +487,19 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ravel-core = { path = "../ravel-core" }
-ravel-http = { path = "../ravel-http" }
-ravel-eloquent = { path = "../ravel-eloquent" }
-ravel-facades = { path = "../ravel-facades" }
-axum = "0.8"
-tokio = { version = "1", features = ["full"] }
-serde = { version = "1", features = ["derive"] }
+ravel-core     = { git = "https://github.com/jwwb681232/ravel" }
+ravel-http     = { git = "https://github.com/jwwb681232/ravel" }
+ravel-eloquent = { git = "https://github.com/jwwb681232/ravel" }
+ravel-facades  = { git = "https://github.com/jwwb681232/ravel" }
+ravel-db-seaorm = { git = "https://github.com/jwwb681232/ravel" }
+sea-orm             = { version = "2.0.0-rc.40", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
+sea-orm-migration   = { version = "2.0.0-rc.40" }
+axum   = "0.8"
+tokio  = { version = "1", features = ["full"] }
+serde  = { version = "1", features = ["derive"] }
 serde_json = "1"
-anyhow = "1"
+anyhow  = "1"
+async-trait = "0.1"
 "#;
 
 const MAIN_RS_TEMPLATE: &str = r#"use axum::Router;
@@ -551,73 +555,34 @@ impl MigratorTrait for Migrator {
 }
 "#;
 
-const MIGRATE_BIN_TEMPLATE: &str = r#"use std::env;
-use sea_orm::Database;
-use sea_orm_migration::MigratorTrait;
-use ravel_db_seaorm::connection::ConnectionManager;
-
-#[path = "../../database/migrations/mod.rs"]
-mod migrations;
+const MIGRATE_BIN_TEMPLATE: &str = r#"//! Migration binary — use `ravel migrate` in your project root instead.
+//! ```bash
+//! ravel migrate           # run pending migrations
+//! ravel migrate:rollback   # rollback last migration
+//! ravel migrate:status     # show migration status
+//! ```
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let mut manager = ConnectionManager::from_config("config")?;
-    let db = manager.connect("default").await?;
-
-    let args: Vec<String> = env::args().collect();
-    let cmd = args.get(1).map(|s| s.as_str()).unwrap_or("up");
-    let steps: Option<u32> = args.get(2).and_then(|s| s.parse().ok());
-
-    match cmd {
-        "up" | "migrate" => {
-            println!("Running migrations...");
-            migrations::Migrator::up(db, steps).await?;
-            println!("Migrations complete.");
-        }
-        "down" | "rollback" => {
-            println!("Rolling back...");
-            migrations::Migrator::down(db, steps.or(Some(1))).await?;
-            println!("Rollback complete.");
-        }
-        "fresh" => {
-            println!("Dropping all tables and re-applying...");
-            migrations::Migrator::fresh(db).await?;
-            println!("Fresh complete.");
-        }
-        "refresh" => {
-            println!("Refreshing (rollback all + re-apply)...");
-            migrations::Migrator::refresh(db).await?;
-            println!("Refresh complete.");
-        }
-        "status" => {
-            migrations::Migrator::status(db).await?;
-        }
-        other => {
-            eprintln!("Unknown command: {other}");
-            eprintln!("Usage: migrate [up|down|fresh|refresh|status] [steps]");
-            std::process::exit(1);
-        }
-    }
-
-    Ok(())
+async fn main() {
+    println!("💡 Use `ravel migrate` from your project root to manage migrations.");
+    println!();
+    println!("   ravel migrate           # up");
+    println!("   ravel migrate:rollback   # down");
+    println!("   ravel migrate:status     # show status");
+    println!("   ravel migrate:fresh     # drop all + re-apply");
 }
 "#;
 
-const SEED_BIN_TEMPLATE: &str = r#"use sea_orm::Database;
-use ravel_db_seaorm::connection::ConnectionManager;
+const SEED_BIN_TEMPLATE: &str = r#"//! Seeder binary — use `ravel db:seed` in your project root instead.
+//! ```bash
+//! ravel db:seed   # run all registered seeders
+//! ```
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let mut manager = ConnectionManager::from_config("config")?;
-    let db = manager.connect("default").await?;
-
-    println!("Seeding database...");
-
-    // Register and run seeders here:
-    // seeders::UserSeeder::run(db).await?;
-
-    println!("Database seeded.");
-    Ok(())
+async fn main() {
+    println!("💡 Use `ravel db:seed` from your project root to run seeders.");
+    println!();
+    println!("   Define seeders in database/seeders/ and register them here.");
 }
 "#;
 
@@ -781,7 +746,7 @@ mod tests {
         assert!(migrator.contains("MigratorTrait"));
 
         let migrate_bin = std::fs::read_to_string(tmp.join("src/bin/migrate.rs")).unwrap();
-        assert!(migrate_bin.contains("Migrator::up"));
+        assert!(migrate_bin.contains("ravel migrate"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
