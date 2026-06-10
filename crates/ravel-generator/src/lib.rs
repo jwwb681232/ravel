@@ -189,6 +189,7 @@ impl Generator {
             "app/Http/Middleware",
             "app/Http/Requests",
             "app/Models",
+            "app/Jobs",
             "app/Services",
             "app/Providers",
             "bootstrap",
