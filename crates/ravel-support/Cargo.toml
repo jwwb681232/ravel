@@ -21,3 +21,4 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 async-trait = "0.1"
 tracing = "0.1"
+redis = { version = "0.25", features = ["tokio-comp"], optional = true }

@@ -262,6 +262,13 @@ impl Queue {
         }
     }
 
+    /// Create a queue backed by a Redis driver.
+    #[cfg(feature = "redis")]
+    pub async fn redis(url: &str) -> anyhow::Result<Self> {
+        let driver = crate::queue_redis::RedisDriver::connect(url).await?;
+        Ok(Self::with_driver(driver))
+    }
+
     /// Create a queue with a custom driver.
     pub fn with_driver(driver: impl QueueDriver + 'static) -> Self {
         Self {
