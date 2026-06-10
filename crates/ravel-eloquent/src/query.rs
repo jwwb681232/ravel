@@ -11,7 +11,8 @@ use sea_orm::{ColumnTrait, DatabaseConnection, Order, Statement, Value};
 use serde::de::DeserializeOwned;
 
 use crate::error::{RavelEloquentError, Result};
-use crate::model_traits::ModelExt;
+use crate::model_traits::{ModelExt, ModelMeta};
+use crate::relations::RelationKind;
 
 // ── QueryBuilder ───────────────────────────────────────────────────────
 
@@ -240,6 +241,35 @@ impl QueryBuilder {
     }
 }
 
+// ── Scopes — reusable query fragments ─────────────────────────────────
+
+/// A reusable query scope that can be applied to any [`QueryBuilder`].
+///
+/// # Example
+///
+/// ```rust,ignore
+/// #[derive(Clone)]
+/// struct Active;
+///
+/// impl Scope<User> for Active {
+///     fn apply(self, qb: QueryBuilder) -> QueryBuilder {
+///         qb.where_eq(UserColumn::Status, "active")
+///     }
+/// }
+///
+/// let users = User::query().scope(Active).get(&db).await?;
+/// ```
+pub trait Scope<T> {
+    fn apply(self, qb: QueryBuilder) -> QueryBuilder;
+}
+
+impl QueryBuilder {
+    /// Apply a scope to this query.  Scopes are reusable query fragments.
+    pub fn scope<T>(self, scope: impl Scope<T>) -> Self {
+        scope.apply(self)
+    }
+}
+
 // ── ORDER BY, LIMIT, OFFSET ────────────────────────────────────────────
 
 impl QueryBuilder {
@@ -338,6 +368,90 @@ impl QueryBuilder {
         let (_, col_name) = col.as_column_ref();
         let col_ref: sea_query::ColumnRef = sea_query::DynIden::from(col_name.to_string()).into();
         self.select.add_group_by([Expr::col(col_ref)]);
+        self
+    }
+}
+
+// ── whereHas / orWhereHas — filter by existence of related records ─────
+
+impl QueryBuilder {
+    /// Filter records that have at least one matching related record
+    /// through the named relation.
+    ///
+    /// The closure receives a sub-query builder on the related table
+    /// and can add arbitrary WHERE conditions.
+    ///
+    /// ```rust,ignore
+    /// // Users who have at least one published post
+    /// let users = User::query()
+    ///     .where_has::<User>("posts", |qb| {
+    ///         qb.where_eq(PostColumn::Published, true)
+    ///     })
+    ///     .get(&db).await?;
+    /// ```
+    pub fn where_has<T: ModelMeta>(
+        self,
+        rel_name: &str,
+        f: impl FnOnce(QueryBuilder) -> QueryBuilder,
+    ) -> Self {
+        self.has_relation::<T>(rel_name, f, false)
+    }
+
+    /// OR variant of [`where_has`](Self::where_has).
+    pub fn or_where_has<T: ModelMeta>(
+        self,
+        rel_name: &str,
+        f: impl FnOnce(QueryBuilder) -> QueryBuilder,
+    ) -> Self {
+        self.has_relation::<T>(rel_name, f, true)
+    }
+
+    fn has_relation<T: ModelMeta>(
+        mut self,
+        rel_name: &str,
+        f: impl FnOnce(QueryBuilder) -> QueryBuilder,
+        or: bool,
+    ) -> Self {
+        let meta = T::get_relation(rel_name).unwrap_or_else(|| {
+            panic!(
+                "where_has: relation '{}' not found on model '{}'",
+                rel_name,
+                T::table_name()
+            )
+        });
+
+        if meta.kind == RelationKind::BelongsToMany {
+            panic!(
+                "where_has: BelongsToMany relation '{}' is not yet supported. \
+                 Use a manual EXISTS subquery instead.",
+                rel_name
+            );
+        }
+
+        // Build subquery: SELECT 1 FROM related
+        //                 WHERE related.fk = parent.pk AND <user filter>
+        let mut sub = Query::select();
+        sub.expr(Expr::cust("1"));
+        sub.from(sea_query::Alias::new(meta.table_name));
+
+        // Correlation: related.fk = parent.pk  — identifiers are static
+        let corr_sql = format!(
+            "\"{}\".\"{}\" = \"{}\".\"{}\"",
+            meta.table_name, meta.foreign_key, T::table_name(), meta.local_key,
+        );
+        sub.and_where(Expr::cust(corr_sql));
+
+        // Apply user's filter via QueryBuilder
+        let tmp = QueryBuilder { select: sub, columns: vec![], eager_loads: vec![] };
+        let tmp = f(tmp);
+
+        if or {
+            self.select.cond_where(
+                sea_orm::sea_query::Condition::any().add(Expr::exists(tmp.select)),
+            );
+        } else {
+            self.select.and_where(Expr::exists(tmp.select));
+        }
         self
     }
 }

@@ -157,3 +157,80 @@ async fn test_all_without_with_does_not_load() {
     assert_eq!(users.len(), 1);
     assert_eq!(users[0].posts.len(), 0);
 }
+
+// ── Scope tests ─────────────────────────────────────────────────────
+
+#[derive(Clone)]
+struct StartsWithA;
+
+impl ravel_eloquent::Scope<User> for StartsWithA {
+    fn apply(self, qb: ravel_eloquent::QueryBuilder) -> ravel_eloquent::QueryBuilder {
+        qb.where_str("name", "Alice")
+    }
+}
+
+#[tokio::test]
+async fn test_scope_filters_users() {
+    let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
+    db.execute_unprepared(
+        "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)",
+    ).await.unwrap();
+
+    db.execute_unprepared("INSERT INTO users (name) VALUES ('Alice')").await.unwrap();
+    db.execute_unprepared("INSERT INTO users (name) VALUES ('Bob')").await.unwrap();
+
+    let users: Vec<User> = User::query()
+        .scope(StartsWithA)
+        .get(&db)
+        .await
+        .unwrap();
+    assert_eq!(users.len(), 1);
+    assert_eq!(users[0].name, "Alice");
+}
+
+// ── whereHas tests ───────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_where_has_filters_by_relation() {
+    let db = sea_orm::Database::connect("sqlite::memory:").await.unwrap();
+    db.execute_unprepared(
+        "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)",
+    ).await.unwrap();
+    db.execute_unprepared(
+        "CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, user_id INTEGER NOT NULL)",
+    ).await.unwrap();
+
+    db.execute_unprepared("INSERT INTO users (name) VALUES ('Alice')").await.unwrap();
+    db.execute_unprepared("INSERT INTO users (name) VALUES ('Bob')").await.unwrap();
+    db.execute_unprepared("INSERT INTO posts (title, user_id) VALUES ('First Post', 1)").await.unwrap();
+    db.execute_unprepared("INSERT INTO posts (title, user_id) VALUES ('Second Post', 2)").await.unwrap();
+
+    // Both Alice and Bob have posts
+    let users: Vec<User> = User::query()
+        .where_has::<User>("posts", |qb| qb)
+        .get(&db)
+        .await
+        .unwrap();
+    assert_eq!(users.len(), 2);
+
+    // Filter: users who have a post titled "First Post"
+    let users: Vec<User> = User::query()
+        .where_has::<User>("posts", |qb| {
+            qb.where_str("title", "First Post")
+        })
+        .get(&db)
+        .await
+        .unwrap();
+    assert_eq!(users.len(), 1);
+    assert_eq!(users[0].name, "Alice");
+
+    // No user has a post titled "Nonexistent"
+    let users: Vec<User> = User::query()
+        .where_has::<User>("posts", |qb| {
+            qb.where_str("title", "Nonexistent")
+        })
+        .get(&db)
+        .await
+        .unwrap();
+    assert!(users.is_empty());
+}

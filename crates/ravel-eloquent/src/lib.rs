@@ -36,7 +36,7 @@ pub use fillable::Fillable;
 pub use model_traits::{
     ActiveModelExt, HasTimestamps, ModelExt, ModelMeta, Replicates, Serializes,
 };
-pub use query::{Page, QueryBuilder};
+pub use query::{Page, QueryBuilder, Scope};
 pub use ravel_eloquent_macros::Model;
 pub use relations::{
     BelongsTo, BelongsToMany, HasMany, HasOne, RelationKind, RelationMeta, RelationQuery,
