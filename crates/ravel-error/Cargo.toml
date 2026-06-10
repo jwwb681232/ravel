@@ -1,0 +1,9 @@
+[package]
+name = "ravel-error"
+version = "0.1.0"
+edition = "2024"
+description = "Shared error protocol for the Ravel framework"
+license = "MIT"
+
+[dependencies]
+http = "1"

@@ -8,6 +8,7 @@ members = [
     "crates/ravel-db-seaorm",
     "crates/ravel-eloquent",
     "crates/ravel-eloquent-macros",
+    "crates/ravel-error",
     "crates/ravel-http",
     "crates/ravel-generator",
     "crates/ravel-macros",
