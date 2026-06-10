@@ -97,6 +97,47 @@ impl<T> Default for BelongsTo<T> {
     }
 }
 
+/// Container for a "belongs-to-many" relation (many-to-many via a pivot table).
+///
+/// After eager-loading via `with()`, holds all matching related records.
+/// Implements `Deref<Target = [T]>` so you can iterate directly.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BelongsToMany<T>(pub Vec<T>);
+
+impl<T> BelongsToMany<T> {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+    pub fn items(&self) -> &[T] {
+        &self.0
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl<T> Default for BelongsToMany<T> {
+    fn default() -> Self {
+        Self(Vec::new())
+    }
+}
+
+impl<T> Deref for BelongsToMany<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        &self.0
+    }
+}
+
+impl<T> From<Vec<T>> for BelongsToMany<T> {
+    fn from(v: Vec<T>) -> Self {
+        Self(v)
+    }
+}
+
 // ── Relation metadata ────────────────────────────────────────────────
 
 /// Kind of relationship.
@@ -105,6 +146,7 @@ pub enum RelationKind {
     HasMany,
     HasOne,
     BelongsTo,
+    BelongsToMany,
 }
 
 /// Static metadata for a relationship declared on a model.
@@ -124,6 +166,12 @@ pub struct RelationMeta {
     pub local_key: &'static str,
     /// Callback that returns the column names of the related table.
     pub get_columns: fn() -> &'static [&'static str],
+    /// Pivot table name (BelongsToMany only).
+    pub pivot_table: Option<&'static str>,
+    /// Foreign-key column on the pivot table pointing to the parent.
+    pub pivot_foreign_key: Option<&'static str>,
+    /// Foreign-key column on the pivot table pointing to the related model.
+    pub pivot_related_key: Option<&'static str>,
 }
 
 // ── RelationQuery (lazy-loading) ─────────────────────────────────────

@@ -169,11 +169,21 @@ impl Post {
 ```
 
 `#[derive(Model)]` generates:
-- `UserColumn` / `PostColumn` enums (PascalCase variants, `as_str()`)
+
+**Types:**
+- `UserColumn` / `PostColumn` enums (PascalCase variants, `as_str()`, `FromStr`, `ColumnTrait`)
 - `UserPublic` / `PostPublic` structs (hidden fields excluded)
-- `ModelMeta`, `ModelExt`, `ActiveModelExt`, `Fillable`, `Serializes`, `Replicates` trait impls
-- `query()`, `where_str()`, `find()`, `find_or_fail()`, `all()`, `create()`, `destroy()`
-- `save()`, `insert()`, `update()`, `delete()`, `refresh()`, `replicate()`, `touch()`
+- `UserEntity` / `PostEntity` — SeaORM `EntityTrait` impl
+- `UserActiveModel` / `PostActiveModel` — `ActiveValue<Value>` fields for insert/update
+- `UserPrimaryKey` / `PostPrimaryKey` — `PrimaryKeyTrait` impl
+
+**Traits:**
+- `ModelMeta`, `ModelExt`, `ActiveModelExt`, `Fillable`, `Serializes`, `Replicates`
+- `FromQueryResult`, `ModelTrait` (SeaORM compatibility)
+
+**Methods:**
+- `query()`, `query_with_trashed()`, `where_str()`, `find()`, `find_or_fail()`, `all()`, `all_with_trashed()`, `all_only_trashed()`, `create()`, `destroy()`
+- `save()`, `insert()`, `update()`, `delete()`, `force_delete()`, `restore()`, `refresh()`, `replicate()`, `touch()`
 - `set_name()`, `set_email()`, … per-field chainable setters
 - `to_public()`, `to_json()`, `to_public_json()`, `fill()`
 
@@ -427,6 +437,7 @@ pub async fn destroy(Path(id): Path<i32>) -> Result<impl IntoResponse, RavelErro
     }
 
     // Eloquent: consumptive delete (post is consumed)
+    // With soft_deletes enabled, this would SET deleted_at = NOW()
     post.delete(db())
         .await
         .map_err(|e| RavelError::internal(e.to_string()))?;
@@ -458,7 +469,7 @@ pub struct User {
 
     // Each user has many posts
     #[model(has_many)]
-    pub posts: HasMany<Post>,
+    pub posts: ravel_eloquent::HasMany<Post>,
 }
 
 // On the Post model, add:
@@ -472,7 +483,7 @@ pub struct Post {
 
     // Each post belongs to a user
     #[model(belongs_to, from = "user_id", to = "id")]
-    pub author: HasOne<User>,
+    pub author: ravel_eloquent::HasOne<User>,
 }
 ```
 
@@ -497,6 +508,74 @@ let author = post.author().first(db()).await?;
 // ── Count related records ──
 let post_count = user.posts().count(db()).await?;
 let has_posts = user.posts().exists(db()).await?;
+```
+
+### Eager-loading with `.with()`
+
+```rust
+// Preload related data in a single pass
+let users = User::query()
+    .where_str("active", true)
+    .with("posts")
+    .get(db()).await?;
+
+// Or via static method
+let users = User::all_with(db(), &["posts"]).await?;
+
+for user in &users {
+    println!("{} has {} posts", user.name, user.posts.len());
+}
+```
+
+### Many-to-Many (BelongsToMany)
+
+```rust
+// Define with pivot table
+#[derive(Model, ...)]
+#[model(table = "users")]
+struct User {
+    #[model(id)] pub id: i32,
+    #[model(has_many, via = "role_user")]
+    pub roles: ravel_eloquent::BelongsToMany<Role>,
+}
+
+// Eager-load
+let users = User::all_with(&db, &["roles"]).await?;
+
+// Pivot operations
+let user = User::find(&db, 1).await?;
+user.attach("roles", &[1, 2], &db).await?;      // add roles
+user.detach("roles", &[2], &db).await?;          // remove specific roles
+user.sync("roles", &[1, 3], &db).await?;         // replace all roles
+```
+
+### Soft Deletes
+
+```rust
+#[derive(Model, ...)]
+#[model(table = "posts", soft_deletes)]
+struct Post {
+    #[model(id)] pub id: i32,
+    pub title: String,
+}
+
+// Normal queries filter out trashed records automatically
+let active = Post::all(&db).await?;  // WHERE deleted_at IS NULL
+
+// Include trashed
+let all = Post::all_with_trashed(&db).await?;
+
+// Only trashed
+let trashed = Post::all_only_trashed(&db).await?;
+
+// Soft delete
+post.delete(&db).await?;  // UPDATE SET deleted_at = NOW()
+
+// Hard delete
+post.force_delete(&db).await?;  // DELETE FROM
+
+// Restore
+let restored = trashed.restore(&db).await?;  // SET deleted_at = NULL
 ```
 
 ---
@@ -629,13 +708,18 @@ async fn main() -> anyhow::Result<()> {
 
 | Concept | v2 API |
 |---------|--------|
-| Model | `#[derive(Model)]`, `#[model(table = "...", timestamps)]` |
+| Model | `#[derive(Model)]`, `#[model(table = "...", timestamps, soft_deletes)]` |
 | Static find | `User::find(db, id)`, `User::find_or_fail(db, id)` |
 | Query | `User::query().where_eq(col, val).order_by_desc(col).limit(10).get(db)` |
+| Aggregates | `.count()`, `.sum(col)`, `.avg(col)`, `.min(col)`, `.max(col)`, `.group_by(col)` |
 | Create | `User::create(serde_json::json!({...}), db)` |
 | Save | `user.set_name("Bob").save(db)` (id==0 INSERT, else UPDATE) |
-| Delete | `user.delete(db)` (consumptive), `Post::destroy(db, id)` (static) |
+| Delete | `user.delete(db)` (consumptive, soft or hard), `user.force_delete(db)` (hard), `Post::destroy(db, id)` (static) |
+| Restore | `trashed.restore(db)` — sets `deleted_at = NULL` |
+| Soft Deletes | `all()`, `all_with_trashed()`, `all_only_trashed()`, `query()`, `query_with_trashed()` |
+| Eager Loading | `User::query().with("posts").get(db)`, `User::all_with(db, &["posts"])` |
 | Relations | `user.posts().where_eq(...).order_by_desc(...).get(db)` |
+| BelongsToMany | `user.roles()` — eager-load, `attach()`, `detach()`, `sync()` pivot ops |
 | Public JSON | `post.to_public()` / `post.to_public_json()` (hidden fields excluded) |
 | Routing | `Route::get/post/put/delete()`, `Route::group()` |
 | Validation | `FormRequest` trait, `Validated<T>`, `Rule::Required/Email/Min` |

@@ -4,9 +4,10 @@
 //!
 //! 1.  `{StructName}Column` enum — PascalCase variants, `as_str()` method
 //! 2.  `{StructName}Public` struct — non-hidden, non-relation fields
-//! 3.  `ModelMeta` trait impl
-//! 4.  Inherent impl block — `to_public()`, `query()`, `where_str()`, CRUD, setters
-//! 5.  `ModelExt` trait impl
+//! 3.  `{StructName}Entity` / `{StructName}ActiveModel` / `{StructName}PrimaryKey` — SeaORM types
+//! 4.  `ModelMeta` trait impl
+//! 5.  Inherent impl block — `to_public()`, `query()`, `where_str()`, CRUD, setters
+//! 6.  `ModelExt` / `ActiveModelExt` / `FromQueryResult` / `ModelTrait` impls
 
 use crate::attrs::{ColumnType, ModelAttrs, to_pascal_case};
 use proc_macro2::TokenStream;
@@ -44,17 +45,24 @@ pub fn generate(input: &syn::DeriveInput) -> syn::Result<TokenStream> {
 fn generate_all(model: &ModelAttrs, struct_name: &syn::Ident) -> TokenStream {
     let public_name = format_ident!("{}Public", struct_name);
     let column_enum = format_ident!("{}Column", struct_name);
+    let entity_name = format_ident!("{}Entity", struct_name);
+    let active_model_name = format_ident!("{}ActiveModel", struct_name);
+    let pk_enum = format_ident!("{}PrimaryKey", struct_name);
+    let rel_enum = format_ident!("{}Relation", struct_name);
 
     let columns = generate_column_enum(model, &column_enum, struct_name);
     let public_ = generate_public_struct(model, &public_name);
-    let meta = generate_model_meta(model, struct_name, &public_name, &column_enum);
+    let sea_orm_types = generate_sea_orm_types(model, struct_name, &entity_name, &active_model_name, &pk_enum, &rel_enum, &column_enum);
+    let meta = generate_model_meta(model, struct_name, &public_name, &column_enum, &entity_name, &active_model_name);
     let methods = generate_inherent_methods(model, struct_name);
-    let traits = generate_trait_impls(model, struct_name);
+    let traits = generate_trait_impls(model, struct_name, &entity_name, &column_enum);
 
     quote! {
         #columns
 
         #public_
+
+        #sea_orm_types
 
         #meta
 
@@ -206,6 +214,294 @@ fn generate_column_enum(model: &ModelAttrs, enum_name: &syn::Ident, struct_name:
     }
 }
 
+// ── 2b. SeaORM Entity / ActiveModel / PrimaryKey ─────────────────────────
+
+fn generate_sea_orm_types(
+    model: &ModelAttrs,
+    struct_name: &syn::Ident,
+    entity_name: &syn::Ident,
+    active_model_name: &syn::Ident,
+    pk_enum: &syn::Ident,
+    rel_enum: &syn::Ident,
+    column_enum: &syn::Ident,
+) -> TokenStream {
+    let db_fields: Vec<_> = model.fields.iter().filter(|f| f.relation.is_none()).collect();
+
+    // ActiveModel fields: each field is wrapped in ActiveValue
+    let _active_model_fields: Vec<TokenStream> = db_fields.iter().map(|f| {
+        let name = format_ident!("{}", f.field_name);
+        quote! { pub #name: ::sea_orm::ActiveValue<sea_orm::Value> }
+    }).collect();
+
+    let _active_model_notset_fields: Vec<TokenStream> = db_fields.iter().map(|f| {
+        let name = format_ident!("{}", f.field_name);
+        quote! { #name: ::sea_orm::ActiveValue::NotSet }
+    }).collect();
+
+    // PrimaryKey variants — just the pk columns
+    let pk_fields: Vec<_> = db_fields.iter().filter(|f| f.is_primary_key || matches!(f.col_type, ColumnType::Id | ColumnType::Uuid)).collect();
+    let pk_variants: Vec<TokenStream> = pk_fields.iter().map(|f| {
+        let v = format_ident!("{}", to_pascal_case(&f.field_name));
+        quote! { #v }
+    }).collect();
+    let pk_iter_variants: Vec<TokenStream> = pk_variants.iter().map(|v| quote! { Self::#v }).collect();
+    let pk_value_type = if pk_fields.len() == 1 {
+        let ty = &pk_fields[0].field_type;
+        quote! { #ty }
+    } else {
+        let types: Vec<_> = pk_fields.iter().map(|f| &f.field_type).collect();
+        quote! { (#(#types,)*) }
+    };
+    let pk_auto_increment = pk_fields.iter().any(|f| matches!(f.col_type, ColumnType::Id));
+    let pk_auto_inc = if pk_auto_increment { quote! { true } } else { quote! { false } };
+
+    let pk_into_column_arms: Vec<TokenStream> = pk_fields.iter().map(|f| {
+        let v = format_ident!("{}", to_pascal_case(&f.field_name));
+        let col_v = format_ident!("{}", to_pascal_case(&f.field_name));
+        quote! { Self::#v => #column_enum::#col_v }
+    }).collect();
+    let pk_from_column_arms: Vec<TokenStream> = pk_fields.iter().map(|f| {
+        let v = format_ident!("{}", to_pascal_case(&f.field_name));
+        let col_v = format_ident!("{}", to_pascal_case(&f.field_name));
+        quote! { #column_enum::#col_v => ::core::option::Option::Some(Self::#v) }
+    }).collect();
+
+    // IntoActiveModel impl: Model -> ActiveModel (Unchanged fields)
+    let into_active_model_fields: Vec<TokenStream> = db_fields.iter().map(|f| {
+        let name = format_ident!("{}", f.field_name);
+        quote! { #name: ::sea_orm::ActiveValue::Unchanged(::sea_orm::Value::from(self.#name.clone())) }
+    }).collect();
+
+    // ActiveModelTrait impl arms
+    let am_get_arms: Vec<TokenStream> = db_fields.iter().map(|f| {
+        let name = format_ident!("{}", f.field_name);
+        let col_v = format_ident!("{}", to_pascal_case(&f.field_name));
+        quote! { #column_enum::#col_v => self.#name.clone() }
+    }).collect();
+    let am_take_arms: Vec<TokenStream> = db_fields.iter().map(|f| {
+        let name = format_ident!("{}", f.field_name);
+        let col_v = format_ident!("{}", to_pascal_case(&f.field_name));
+        quote! { #column_enum::#col_v => ::std::mem::replace(&mut self.#name, ::sea_orm::ActiveValue::NotSet) }
+    }).collect();
+    let am_set_if_not_equals_arms: Vec<TokenStream> = db_fields.iter().map(|f| {
+        let name = format_ident!("{}", f.field_name);
+        let col_v = format_ident!("{}", to_pascal_case(&f.field_name));
+        quote! { #column_enum::#col_v => { self.#name = ::sea_orm::ActiveValue::Set(v); } }
+    }).collect();
+    let am_try_set_arms: Vec<TokenStream> = db_fields.iter().map(|f| {
+        let name = format_ident!("{}", f.field_name);
+        let col_v = format_ident!("{}", to_pascal_case(&f.field_name));
+        quote! {
+            #column_enum::#col_v => {
+                self.#name = ::sea_orm::ActiveValue::Set(v);
+                ::core::result::Result::Ok(())
+            }
+        }
+    }).collect();
+    let am_not_set_arms: Vec<TokenStream> = db_fields.iter().map(|f| {
+        let name = format_ident!("{}", f.field_name);
+        let col_v = format_ident!("{}", to_pascal_case(&f.field_name));
+        quote! { #column_enum::#col_v => { self.#name = ::sea_orm::ActiveValue::NotSet; } }
+    }).collect();
+    let am_is_not_set_arms: Vec<TokenStream> = db_fields.iter().map(|f| {
+        let name = format_ident!("{}", f.field_name);
+        let col_v = format_ident!("{}", to_pascal_case(&f.field_name));
+        quote! { #column_enum::#col_v => matches!(self.#name, ::sea_orm::ActiveValue::NotSet) }
+    }).collect();
+    let am_reset_arms: Vec<TokenStream> = db_fields.iter().map(|f| {
+        let name = format_ident!("{}", f.field_name);
+        let col_v = format_ident!("{}", to_pascal_case(&f.field_name));
+        quote! { #column_enum::#col_v => { if let ::sea_orm::ActiveValue::Unchanged(v) = &self.#name { self.#name = ::sea_orm::ActiveValue::Set(v.clone()); } } }
+    }).collect();
+
+    quote! {
+        // ── Entity unit struct ──────────────────────────────────────
+        #[derive(Copy, Clone, Default, Debug)]
+        struct #entity_name;
+
+        impl ::sea_orm::sea_query::Iden for #entity_name {
+            fn unquoted(&self) -> &str {
+                <#struct_name as ravel_eloquent::ModelMeta>::table_name()
+            }
+        }
+
+        impl ::sea_orm::IdenStatic for #entity_name {
+            fn as_str(&self) -> &'static str {
+                <#struct_name as ravel_eloquent::ModelMeta>::table_name()
+            }
+        }
+
+        impl ::sea_orm::EntityName for #entity_name {
+            fn table_name(&self) -> &'static str {
+                <#struct_name as ravel_eloquent::ModelMeta>::table_name()
+            }
+        }
+
+        impl ::sea_orm::EntityTrait for #entity_name {
+            type Model = #struct_name;
+            type ModelEx = #struct_name;
+            type ActiveModel = #active_model_name;
+            type ActiveModelEx = #active_model_name;
+            type Column = #column_enum;
+            type Relation = #rel_enum;
+            type PrimaryKey = #pk_enum;
+        }
+
+        // ── ActiveModel struct ──────────────────────────────────────
+        #[derive(Clone, Debug)]
+        struct #active_model_name {
+            #(#_active_model_fields,)*
+        }
+
+        impl ::sea_orm::ActiveModelTrait for #active_model_name {
+            type Entity = #entity_name;
+
+            fn default() -> Self {
+                Self {
+                    #(#_active_model_notset_fields,)*
+                }
+            }
+
+            fn take(&mut self, c: <Self::Entity as ::sea_orm::EntityTrait>::Column) -> ::sea_orm::ActiveValue<::sea_orm::Value> {
+                match c {
+                    #(#am_take_arms,)*
+                }
+            }
+
+            fn get(&self, c: <Self::Entity as ::sea_orm::EntityTrait>::Column) -> ::sea_orm::ActiveValue<::sea_orm::Value> {
+                match c {
+                    #(#am_get_arms,)*
+                }
+            }
+
+            fn set_if_not_equals(&mut self, c: <Self::Entity as ::sea_orm::EntityTrait>::Column, v: ::sea_orm::Value) {
+                match c {
+                    #(#am_set_if_not_equals_arms,)*
+                }
+            }
+
+            fn try_set(&mut self, c: <Self::Entity as ::sea_orm::EntityTrait>::Column, v: ::sea_orm::Value) -> ::core::result::Result<(), ::sea_orm::DbErr> {
+                match c {
+                    #(#am_try_set_arms,)*
+                    _ => ::core::result::Result::Ok(())
+                }
+            }
+
+            fn not_set(&mut self, c: <Self::Entity as ::sea_orm::EntityTrait>::Column) {
+                match c {
+                    #(#am_not_set_arms,)*
+                }
+            }
+
+            fn is_not_set(&self, c: <Self::Entity as ::sea_orm::EntityTrait>::Column) -> bool {
+                match c {
+                    #(#am_is_not_set_arms,)*
+                }
+            }
+
+            fn default_values() -> Self {
+                Self::default()
+            }
+
+            fn reset(&mut self, c: <Self::Entity as ::sea_orm::EntityTrait>::Column) {
+                match c {
+                    #(#am_reset_arms,)*
+                }
+            }
+        }
+
+        impl ::sea_orm::ActiveModelBehavior for #active_model_name {}
+
+        // ── IntoActiveModel (Model -> ActiveModel) ──────────────────
+        impl ::sea_orm::IntoActiveModel<#active_model_name> for #struct_name {
+            fn into_active_model(self) -> #active_model_name {
+                #active_model_name {
+                    #(#into_active_model_fields,)*
+                }
+            }
+        }
+
+        // ── PrimaryKey enum ─────────────────────────────────────────
+        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+        pub enum #pk_enum {
+            #(#pk_variants,)*
+        }
+
+        impl ::sea_orm::sea_query::Iden for #pk_enum {
+            fn unquoted(&self) -> &str {
+                match self {
+                    #(#pk_into_column_arms,)*
+                }
+                .as_str()
+            }
+        }
+
+        impl ::sea_orm::IdenStatic for #pk_enum {
+            fn as_str(&self) -> &'static str {
+                match self {
+                    #(#pk_into_column_arms,)*
+                }
+                .as_str()
+            }
+        }
+
+        impl ::sea_orm::Iterable for #pk_enum {
+            type Iterator = ::std::vec::IntoIter<Self>;
+            fn iter() -> Self::Iterator {
+                ::std::vec![#(#pk_iter_variants,)*].into_iter()
+            }
+        }
+
+        impl ::sea_orm::PrimaryKeyTrait for #pk_enum {
+            type ValueType = #pk_value_type;
+            fn auto_increment() -> bool {
+                #pk_auto_inc
+            }
+        }
+
+        impl ::sea_orm::PrimaryKeyToColumn for #pk_enum {
+            type Column = #column_enum;
+            fn into_column(self) -> Self::Column {
+                match self {
+                    #(#pk_into_column_arms,)*
+                }
+            }
+            fn from_column(col: Self::Column) -> ::core::option::Option<Self> {
+                match col {
+                    #(#pk_from_column_arms,)*
+                    _ => ::core::option::Option::None,
+                }
+            }
+        }
+
+        // ── Relation enum (dummy, not used by our system) ───────────
+        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+        pub enum #rel_enum {
+            #[doc(hidden)]
+            __Void
+        }
+
+        impl ::sea_orm::sea_query::Iden for #rel_enum {
+            fn unquoted(&self) -> &str { match self { Self::__Void => "" } }
+        }
+
+        impl ::sea_orm::IdenStatic for #rel_enum {
+            fn as_str(&self) -> &'static str { match self { Self::__Void => "" } }
+        }
+
+        impl ::sea_orm::Iterable for #rel_enum {
+            type Iterator = ::std::vec::IntoIter<Self>;
+            fn iter() -> Self::Iterator { ::std::vec![Self::__Void].into_iter() }
+        }
+
+        impl ::sea_orm::RelationTrait for #rel_enum {
+            fn def(&self) -> ::sea_orm::RelationDef {
+                match self { Self::__Void => unreachable!() }
+            }
+        }
+    }
+}
+
 // ── 3. Public struct ───────────────────────────────────────────────────────
 
 fn generate_public_struct(model: &ModelAttrs, public_name: &syn::Ident) -> TokenStream {
@@ -220,7 +516,6 @@ fn generate_public_struct(model: &ModelAttrs, public_name: &syn::Ident) -> Token
         })
         .collect();
 
-    // Include auto-synthesized timestamp fields in the Public struct too.
     if model.has_timestamps {
         let has_created = model.fields.iter().any(|f| f.field_name == "created_at");
         let has_updated = model.fields.iter().any(|f| f.field_name == "updated_at");
@@ -248,10 +543,11 @@ fn generate_model_meta(
     struct_name: &syn::Ident,
     public_name: &syn::Ident,
     column_enum: &syn::Ident,
+    entity_name: &syn::Ident,
+    active_model_name: &syn::Ident,
 ) -> TokenStream {
     let table_name = &model.table_name;
 
-    // All non-relation column names.
     let column_names: Vec<&str> = model
         .fields
         .iter()
@@ -259,7 +555,6 @@ fn generate_model_meta(
         .map(|f| f.column_name.as_str())
         .collect();
 
-    // Include synthetic timestamp column names when applicable.
     let mut all_columns = column_names.clone();
     if model.has_timestamps {
         let has_created = model.fields.iter().any(|f| f.field_name == "created_at");
@@ -271,8 +566,13 @@ fn generate_model_meta(
             all_columns.push("updated_at");
         }
     }
+    if model.has_soft_deletes {
+        let has_del = model.fields.iter().any(|f| f.column_name == model.soft_delete_column);
+        if !has_del {
+            all_columns.push(&model.soft_delete_column);
+        }
+    }
 
-    // ID column: first field that is a primary key or Id/Uuid type.
     let id_col = model
         .fields
         .iter()
@@ -280,7 +580,6 @@ fn generate_model_meta(
         .map(|f| f.column_name.as_str())
         .unwrap_or("id");
 
-    // Public columns: non-hidden, non-relation (plus synthetic timestamps).
     let mut public_cols: Vec<&str> = model
         .fields
         .iter()
@@ -298,17 +597,15 @@ fn generate_model_meta(
         }
     }
 
-    // ── Relation metadata ──────────────────────────────────────────────
-
     let rel_fields: Vec<_> = model.fields.iter().filter(|f| f.relation.is_some()).collect();
 
-    // Generate per-relation get_columns() callbacks.
     let get_columns_fns: Vec<TokenStream> = rel_fields.iter().map(|f| {
         let rel = f.relation.as_ref().unwrap();
         let entity_type = match rel {
             crate::attrs::RelationKind::HasMany { entity_type, .. } => entity_type,
             crate::attrs::RelationKind::HasOne { entity_type, .. } => entity_type,
             crate::attrs::RelationKind::BelongsTo { entity_type, .. } => entity_type,
+            crate::attrs::RelationKind::BelongsToMany { entity_type, .. } => entity_type,
         };
         let fn_name = format_ident!("__{}_{}_columns", struct_name, f.field_name);
         quote! {
@@ -318,13 +615,12 @@ fn generate_model_meta(
         }
     }).collect();
 
-    // Generate RelationMeta static values.
     let rel_meta_vars: Vec<TokenStream> = rel_fields.iter().map(|f| {
         let rel = f.relation.as_ref().unwrap();
         let field_name = &f.field_name;
         let fn_name = format_ident!("__{}_{}_columns", struct_name, f.field_name);
 
-        let (kind, rel_table, foreign_key, local_key): (&str, String, String, String) = match rel {
+        let (kind, rel_table, foreign_key, local_key, pivot_table, pivot_foreign_key, pivot_related_key): (&str, String, String, String, Option<String>, Option<String>, Option<String>) = match rel {
             crate::attrs::RelationKind::HasMany { entity_type, table, .. } => {
                 let table = table.as_deref().map(|s| s.to_string()).unwrap_or_else(|| {
                     let type_str = quote::quote!(#entity_type).to_string();
@@ -332,7 +628,7 @@ fn generate_model_meta(
                 });
                 let fk_base = table_name.trim_end_matches('s');
                 let fk = format!("{}_id", fk_base);
-                ("HasMany", table, fk, "id".to_string())
+                ("HasMany", table, fk, "id".to_string(), None, None, None)
             }
             crate::attrs::RelationKind::HasOne { entity_type, table } => {
                 let table = table.as_deref().map(|s| s.to_string()).unwrap_or_else(|| {
@@ -341,17 +637,46 @@ fn generate_model_meta(
                 });
                 let fk_base = table_name.trim_end_matches('s');
                 let fk = format!("{}_id", fk_base);
-                ("HasOne", table, fk, "id".to_string())
+                ("HasOne", table, fk, "id".to_string(), None, None, None)
             }
             crate::attrs::RelationKind::BelongsTo { entity_type, from, to, table } => {
                 let table = table.as_deref().map(|s| s.to_string()).unwrap_or_else(|| {
                     let type_str = quote::quote!(#entity_type).to_string();
                     to_snake(&type_str)
                 });
-                ("BelongsTo", table, from.clone(), to.clone())
+                ("BelongsTo", table, from.clone(), to.clone(), None, None, None)
+            }
+            crate::attrs::RelationKind::BelongsToMany { entity_type, via, foreign_key: btm_fk, related_key: btm_rk, table } => {
+                let table = table.as_deref().map(|s| s.to_string()).unwrap_or_else(|| {
+                    let type_str = quote::quote!(#entity_type).to_string();
+                    to_snake(&type_str)
+                });
+                let pivot = via.clone();
+                let pk_fk = btm_fk.clone().unwrap_or_else(|| {
+                    let base = table_name.trim_end_matches('s');
+                    format!("{}_id", base)
+                });
+                let pk_rk = btm_rk.clone().unwrap_or_else(|| {
+                    let base = table.trim_end_matches('s');
+                    format!("{}_id", base)
+                });
+                ("BelongsToMany", table, pk_fk.clone(), "id".to_string(), Some(pivot), Some(pk_fk.clone()), Some(pk_rk))
             }
         };
         let kind_ident = format_ident!("{}", kind);
+
+        let pivot_table_expr = match &pivot_table {
+            Some(t) => quote! { ::core::option::Option::Some(#t) },
+            None => quote! { ::core::option::Option::None },
+        };
+        let pivot_fk_expr = match &pivot_foreign_key {
+            Some(fk) => quote! { ::core::option::Option::Some(#fk) },
+            None => quote! { ::core::option::Option::None },
+        };
+        let pivot_rk_expr = match &pivot_related_key {
+            Some(rk) => quote! { ::core::option::Option::Some(#rk) },
+            None => quote! { ::core::option::Option::None },
+        };
 
         quote! {
             ravel_eloquent::RelationMeta {
@@ -361,6 +686,9 @@ fn generate_model_meta(
                 foreign_key: #foreign_key,
                 local_key: #local_key,
                 get_columns: #fn_name,
+                pivot_table: #pivot_table_expr,
+                pivot_foreign_key: #pivot_fk_expr,
+                pivot_related_key: #pivot_rk_expr,
             }
         }
     }).collect();
@@ -379,10 +707,33 @@ fn generate_model_meta(
         quote! {}
     };
 
+    let soft_delete_impl = if model.has_soft_deletes {
+        let del_col = &model.soft_delete_column;
+        quote! {
+            fn soft_delete_column() -> ::core::option::Option<&'static str> {
+                ::core::option::Option::Some(#del_col)
+            }
+        }
+    } else {
+        quote! {}
+    };
+
+    // find_column: maps column name string → Column enum variant
+    let find_column_arms: Vec<TokenStream> = model.fields.iter()
+        .filter(|f| f.relation.is_none())
+        .map(|f| {
+            let col_name = &f.column_name;
+            let variant = format_ident!("{}", to_pascal_case(&f.field_name));
+            quote! { #col_name => ::std::option::Option::Some(#column_enum::#variant) }
+        })
+        .collect();
+
     quote! {
         impl ravel_eloquent::ModelMeta for #struct_name {
             type Public = #public_name;
             type Columns = #column_enum;
+            type Entity = #entity_name;
+            type ActiveModel = #active_model_name;
 
             fn table_name() -> &'static str {
                 #table_name
@@ -401,6 +752,15 @@ fn generate_model_meta(
             }
 
             #relations_impl
+
+            #soft_delete_impl
+
+            fn find_column(name: &str) -> ::std::option::Option<<Self::Entity as ::sea_orm::EntityTrait>::Column> {
+                match name {
+                    #(#find_column_arms,)*
+                    _ => ::std::option::Option::None,
+                }
+            }
         }
 
         #(#get_columns_fns)*
@@ -411,7 +771,7 @@ fn generate_model_meta(
 
 fn generate_inherent_methods(model: &ModelAttrs, struct_name: &syn::Ident) -> TokenStream {
     let to_public = generate_to_public(model, struct_name);
-    let query = generate_query_shorthands(struct_name);
+    let query = generate_query_shorthands(model, struct_name);
     let static_crud = generate_static_crud(struct_name);
     let setters = generate_setters(model);
 
@@ -425,7 +785,6 @@ fn generate_inherent_methods(model: &ModelAttrs, struct_name: &syn::Ident) -> To
     }
 }
 
-/// `to_public(&self) -> {StructName}Public`
 fn generate_to_public(model: &ModelAttrs, struct_name: &syn::Ident) -> TokenStream {
     let public_name = format_ident!("{}Public", struct_name);
 
@@ -439,7 +798,6 @@ fn generate_to_public(model: &ModelAttrs, struct_name: &syn::Ident) -> TokenStre
         })
         .collect();
 
-    // Synthetic timestamp fields.
     if model.has_timestamps {
         let has_created = model.fields.iter().any(|f| f.field_name == "created_at");
         let has_updated = model.fields.iter().any(|f| f.field_name == "updated_at");
@@ -461,15 +819,30 @@ fn generate_to_public(model: &ModelAttrs, struct_name: &syn::Ident) -> TokenStre
     }
 }
 
-/// `query()` and `where_eq()` shorthands.
-///
-/// Uses `ModelMeta` (already generated) to get table and column names,
-/// then creates a `QueryBuilder` that operates on `sea-query` directly
-/// without needing a SeaORM entity type.
-fn generate_query_shorthands(_struct_name: &syn::Ident) -> TokenStream {
+fn generate_query_shorthands(model: &ModelAttrs, _struct_name: &syn::Ident) -> TokenStream {
+    let soft_filter = if model.has_soft_deletes {
+        let del_col = &model.soft_delete_column;
+        quote! {
+            qb = qb.with_soft_delete_filter(#del_col);
+        }
+    } else {
+        quote! {}
+    };
     quote! {
         pub fn query() -> ravel_eloquent::QueryBuilder {
-            ravel_eloquent::QueryBuilder::new(<Self as ravel_eloquent::ModelMeta>::table_name(), <Self as ravel_eloquent::ModelMeta>::columns())
+            let mut qb = ravel_eloquent::QueryBuilder::new(
+                <Self as ravel_eloquent::ModelMeta>::table_name(),
+                <Self as ravel_eloquent::ModelMeta>::columns(),
+            );
+            #soft_filter
+            qb
+        }
+
+        pub fn query_with_trashed() -> ravel_eloquent::QueryBuilder {
+            ravel_eloquent::QueryBuilder::new_with_trashed(
+                <Self as ravel_eloquent::ModelMeta>::table_name(),
+                <Self as ravel_eloquent::ModelMeta>::columns(),
+            )
         }
 
         pub fn where_str(
@@ -481,7 +854,6 @@ fn generate_query_shorthands(_struct_name: &syn::Ident) -> TokenStream {
     }
 }
 
-/// Static CRUD methods that delegate to the `ModelExt` trait.
 fn generate_static_crud(_struct_name: &syn::Ident) -> TokenStream {
     quote! {
         pub async fn find(
@@ -520,7 +892,6 @@ fn generate_static_crud(_struct_name: &syn::Ident) -> TokenStream {
     }
 }
 
-/// `set_<field>(self, val) -> Self` for each non-hidden, non-relation field.
 fn generate_setters(model: &ModelAttrs) -> TokenStream {
     let setters: Vec<TokenStream> = model
         .fields
@@ -544,19 +915,23 @@ fn generate_setters(model: &ModelAttrs) -> TokenStream {
 
 // ── 6. Trait implementations ───────────────────────────────────────────────
 
-fn generate_trait_impls(model: &ModelAttrs, struct_name: &syn::Ident) -> TokenStream {
+fn generate_trait_impls(
+    model: &ModelAttrs,
+    struct_name: &syn::Ident,
+    entity_name: &syn::Ident,
+    column_enum: &syn::Ident,
+) -> TokenStream {
     let public_name = format_ident!("{}Public", struct_name);
+
+    let db_fields: Vec<_> = model.fields.iter().filter(|f| f.relation.is_none()).collect();
 
     let mut impls: Vec<TokenStream> = Vec::new();
 
     // ModelExt — auto-implemented by the macro
     impls.push(quote! { impl ravel_eloquent::ModelExt for #struct_name {} });
-
-    // ActiveModelExt — provides save/delete/update/refresh with default impls
     impls.push(quote! { impl ravel_eloquent::ActiveModelExt for #struct_name {} });
 
-    // Serializes — the required `to_public()` method delegates to the inherent
-    // method (which takes precedence over the trait method, avoiding recursion).
+    // Serializes
     impls.push(quote! {
         impl ravel_eloquent::Serializes for #struct_name {
             fn to_public(&self) -> #public_name {
@@ -565,10 +940,10 @@ fn generate_trait_impls(model: &ModelAttrs, struct_name: &syn::Ident) -> TokenSt
         }
     });
 
-    // Replicates — has a default impl (just clone), so a blank impl suffices.
+    // Replicates
     impls.push(quote! { impl ravel_eloquent::Replicates for #struct_name {} });
 
-    // Default — all fields default to their type's default (HasMany/HasOne/BelongsTo are empty).
+    // Default
     let default_fields: Vec<TokenStream> = model.fields.iter().map(|f| {
         let name = format_ident!("{}", f.field_name);
         quote! { #name: Default::default() }
@@ -584,9 +959,7 @@ fn generate_trait_impls(model: &ModelAttrs, struct_name: &syn::Ident) -> TokenSt
         }
     });
 
-    // Fillable: field-by-field fill from JSON
-    // Uses `and_then` + `unwrap_or` pattern — the closure does NOT capture
-    // `self` fields, so there is no borrow conflict with struct construction.
+    // Fillable
     let fill_fields: Vec<TokenStream> = model
         .fields
         .iter()
@@ -605,6 +978,92 @@ fn generate_trait_impls(model: &ModelAttrs, struct_name: &syn::Ident) -> TokenSt
             fn fill(self, data: serde_json::Value) -> Self {
                 Self {
                     #(#fill_fields,)*
+                }
+            }
+        }
+    });
+
+    // FromQueryResult: serde round-trip
+    let col_names: Vec<&str> = model.fields.iter()
+        .filter(|f| f.relation.is_none())
+        .map(|f| f.column_name.as_str())
+        .collect();
+
+    impls.push(quote! {
+        impl ::sea_orm::FromQueryResult for #struct_name {
+            fn from_query_result(res: &::sea_orm::QueryResult, pre: &str) -> ::std::result::Result<Self, ::sea_orm::DbErr> {
+                let cols: &[&str] = &[#(#col_names),*];
+                let mut map = ::serde_json::Map::new();
+                for col in cols.iter() {
+                    use ::sea_orm::TryGetable;
+                    let raw: ::std::result::Result<String, _> = res.try_get(pre, col);
+                    let json_val = match raw {
+                        ::std::result::Result::Ok(s) => ::serde_json::Value::String(s),
+                        ::std::result::Result::Err(_) => {
+                            let int_val: ::std::result::Result<i64, _> = res.try_get(pre, col);
+                            match int_val {
+                                ::std::result::Result::Ok(i) => ::serde_json::json!(i),
+                                ::std::result::Result::Err(_) => {
+                                    let float_val: ::std::result::Result<f64, _> = res.try_get(pre, col);
+                                    match float_val {
+                                        ::std::result::Result::Ok(f) => ::serde_json::json!(f),
+                                        ::std::result::Result::Err(_) => {
+                                            let bool_val: ::std::result::Result<bool, _> = res.try_get(pre, col);
+                                            match bool_val {
+                                                ::std::result::Result::Ok(b) => ::serde_json::json!(b),
+                                                ::std::result::Result::Err(_) => ::serde_json::Value::Null,
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    };
+                    map.insert(col.to_string(), json_val);
+                }
+                ::serde_json::from_value(::serde_json::Value::Object(map))
+                    .map_err(|e| ::sea_orm::DbErr::Json(e.to_string()))
+            }
+        }
+    });
+
+    // ModelTrait: delegate get/set to column match
+    let model_get_arms: Vec<TokenStream> = db_fields.iter().map(|f| {
+        let name = format_ident!("{}", f.field_name);
+        let col_v = format_ident!("{}", to_pascal_case(&f.field_name));
+        quote! { #column_enum::#col_v => ::sea_orm::Value::from(self.#name.clone()) }
+    }).collect();
+    let model_try_set_arms: Vec<TokenStream> = db_fields.iter().map(|f| {
+        let name = format_ident!("{}", f.field_name);
+        let col_v = format_ident!("{}", to_pascal_case(&f.field_name));
+        let ty = &f.field_type;
+        quote! {
+            #column_enum::#col_v => {
+                let val: #ty = v.unwrap();
+                self.#name = val;
+                ::std::result::Result::Ok(())
+            }
+        }
+    }).collect();
+
+    impls.push(quote! {
+        impl ::sea_orm::ModelTrait for #struct_name {
+            type Entity = #entity_name;
+
+            fn get(&self, c: <Self::Entity as ::sea_orm::EntityTrait>::Column) -> ::sea_orm::Value {
+                match c {
+                    #(#model_get_arms,)*
+                }
+            }
+
+            fn get_value_type(_c: <Self::Entity as ::sea_orm::EntityTrait>::Column) -> ::sea_orm::sea_query::ArrayType {
+                ::sea_orm::sea_query::ArrayType::String
+            }
+
+            fn try_set(&mut self, c: <Self::Entity as ::sea_orm::EntityTrait>::Column, v: ::sea_orm::Value) -> ::std::result::Result<(), ::sea_orm::DbErr> {
+                match c {
+                    #(#model_try_set_arms,)*
+                    _ => ::std::result::Result::Err(::sea_orm::DbErr::Type("unknown column".into()))
                 }
             }
         }

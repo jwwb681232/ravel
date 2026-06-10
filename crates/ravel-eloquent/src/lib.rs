@@ -13,6 +13,14 @@
 //!     #[model(string, 255, unique)] email: String,
 //!     #[model(hidden)] password: String,
 //!     #[model(datetime)] created_at: chrono::NaiveDateTime,
+//!
+//!     // Relations
+//!     #[model(has_many)]
+//!     pub posts: ravel_eloquent::HasMany<Post>,
+//!
+//!     // Many-to-many via pivot table
+//!     #[model(has_many, via = "role_user")]
+//!     pub roles: ravel_eloquent::BelongsToMany<Role>,
 //! }
 //! ```
 
@@ -31,6 +39,6 @@ pub use model_traits::{
 pub use query::{Page, QueryBuilder};
 pub use ravel_eloquent_macros::Model;
 pub use relations::{
-    BelongsTo, HasMany, HasOne, RelationKind, RelationMeta, RelationQuery,
+    BelongsTo, BelongsToMany, HasMany, HasOne, RelationKind, RelationMeta, RelationQuery,
 };
 pub use sea_orm;

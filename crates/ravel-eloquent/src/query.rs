@@ -39,6 +39,20 @@ pub struct QueryBuilder {
 impl QueryBuilder {
     /// Create a new query builder for `table_name` selecting `columns`.
     pub fn new(table_name: &'static str, columns: &'static [&'static str]) -> Self {
+        Self::new_inner(table_name, columns, false)
+    }
+
+    /// Create a query builder that includes soft-deleted records.
+    pub fn new_with_trashed(table_name: &'static str, columns: &'static [&'static str]) -> Self {
+        Self::new_inner(table_name, columns, true)
+    }
+
+    /// Create a query builder that only fetches soft-deleted records.
+    pub fn new_only_trashed(
+        table_name: &'static str,
+        columns: &'static [&'static str],
+        soft_delete_col: &'static str,
+    ) -> Self {
         let mut select = Query::select();
         for col in columns {
             let alias = sea_query::Alias::new(*col);
@@ -46,11 +60,48 @@ impl QueryBuilder {
             select.column(iden);
         }
         select.from(sea_query::Alias::new(table_name));
+        select.and_where(
+            sea_query::Expr::col(sea_query::Alias::new(soft_delete_col)).is_not_null(),
+        );
         Self {
             select,
             columns: columns.to_vec(),
             eager_loads: Vec::new(),
         }
+    }
+
+    fn new_inner(
+        table_name: &'static str,
+        columns: &'static [&'static str],
+        with_trashed: bool,
+    ) -> Self {
+        let mut select = Query::select();
+        for col in columns {
+            let alias = sea_query::Alias::new(*col);
+            let iden: sea_query::DynIden = alias.into();
+            select.column(iden);
+        }
+        select.from(sea_query::Alias::new(table_name));
+        let builder = Self {
+            select,
+            columns: columns.to_vec(),
+            eager_loads: Vec::new(),
+        };
+        // If NOT with_trashed, check for soft delete column and filter if present
+        if !with_trashed {
+            // We can't access ModelMeta here directly, so the caller handles this.
+            // The `query()` generated method will inject the soft_delete filter.
+        }
+        builder
+    }
+
+    /// Inject a soft-delete WHERE clause into this query.
+    ///
+    /// Called by `#[derive(Model)]` when `soft_deletes` is enabled.
+    pub fn with_soft_delete_filter(mut self, col: &'static str) -> Self {
+        self.select
+            .and_where(sea_query::Expr::col(sea_query::Alias::new(col)).is_null());
+        self
     }
 
     /// Escape hatch: consume self and return the underlying `SelectStatement`.

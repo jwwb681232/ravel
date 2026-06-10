@@ -25,7 +25,7 @@ The macros crate is pulled in automatically — you only need `ravel-eloquent` o
 
 ## Defining a Model
 
-Use `#[derive(Model)]` on a struct. The `#[model(table = "...")]` container attribute sets the database table name. Each column field is annotated with `#[model(...)]` to declare its type and constraints. Relationship fields use `HasMany<T>` / `HasOne<T>` types.
+Use `#[derive(Model)]` on a struct. The `#[model(table = "...")]` container attribute sets the database table name. Each column field is annotated with `#[model(...)]` to declare its type and constraints. Relationship fields use `HasMany<T>` / `HasOne<T>` / `BelongsToMany<T>` types.
 
 ```rust
 use ravel_eloquent::Model;
@@ -52,10 +52,13 @@ struct User {
 
     // Relations
     #[model(has_many)]
-    pub posts: sea_orm::entity::prelude::HasMany<Post>,
+    pub posts: ravel_eloquent::HasMany<Post>,
 
     #[model(belongs_to, from = "team_id", to = "id")]
-    pub team: sea_orm::entity::prelude::HasOne<Team>,
+    pub team: ravel_eloquent::HasOne<Team>,
+
+    #[model(has_many, via = "role_user")]
+    pub roles: ravel_eloquent::BelongsToMany<Role>,
 }
 ```
 
@@ -84,6 +87,8 @@ struct User {
 |-----------|-------------|
 | `table = "name"` | Database table name (**required**) |
 | `timestamps` | Auto-add `created_at` / `updated_at` fields |
+| `soft_deletes` | Enable soft delete (`deleted_at` column) |
+| `soft_deletes = "deleted_on"` | Soft deletes with custom column name |
 
 ### Relationship Attributes
 
@@ -92,7 +97,9 @@ struct User {
 | `has_many` | `#[model(has_many)] pub posts: HasMany<Post>` |
 | `has_one` | `#[model(has_one)] pub profile: HasOne<Profile>` |
 | `belongs_to, from = "fk", to = "pk"` | `#[model(belongs_to, from = "team_id", to = "id")] pub team: HasOne<Team>` |
-| `has_many, via = "junction"` | `#[model(has_many, via = "role_user")] pub roles: HasMany<Role>` (many-to-many) |
+| `has_many, via = "junction"` | `#[model(has_many, via = "role_user")] pub roles: BelongsToMany<Role>` (many-to-many) |
+| `has_many, via = "...", foreign_key = "...", related_key = "..."` | Override pivot FK column names |
+| `table = "tbl"` on a relation field | Override the related table name |
 
 ---
 
@@ -102,28 +109,41 @@ For a model named `User`, `#[derive(Model)]` generates:
 
 ### `UserColumn` enum
 
-Each database column becomes a PascalCase variant with an `as_str()` method:
+Each database column becomes a PascalCase variant. Implements `ColumnTrait`, `IdenStatic`, `Iterable`, `FromStr`, and `EntityName`.
 
 ```rust
-let col = UserColumn::Email;
-assert_eq!(col.as_str(), "email");
+assert_eq!(UserColumn::Email.as_str(), "email");
+let col: UserColumn = "email".parse().unwrap(); // FromStr
 ```
 
 ### `UserPublic` struct
 
 A `#[derive(Debug, Clone, serde::Serialize)]` struct with all **non-hidden**, **non-relation** fields. This is the safe type for API responses.
 
+### SeaORM Entity / ActiveModel types
+
+The macro also generates internal SeaORM 2.0-compatible types:
+
+| Type | Purpose |
+|------|---------|
+| `UserEntity` | Unit struct impl `EntityTrait` — represents the table |
+| `UserActiveModel` | `ActiveValue<Value>`-wrapped fields for insert/update |
+| `UserPrimaryKey` | PK enum impl `PrimaryKeyTrait` + `PrimaryKeyToColumn` |
+| `UserRelation` | Dummy relation enum |
+
 ### Trait Implementations
 
 | Trait | Provides |
 |-------|----------|
-| `ModelMeta` | `table_name()`, `columns()`, `id_column()`, `public_columns()` |
-| `ModelExt` | `find()`, `find_or_fail()`, `all()`, `create()`, `destroy()` |
-| `ActiveModelExt` | `save()`, `insert()`, `update()`, `delete()`, `refresh()` |
+| `ModelMeta` | `table_name()`, `columns()`, `id_column()`, `public_columns()`, `find_column()`, `soft_delete_column()` |
+| `ModelExt` | `find()`, `find_or_fail()`, `all()`, `all_with_trashed()`, `all_only_trashed()`, `create()`, `destroy()` |
+| `ActiveModelExt` | `save()`, `insert()`, `update()`, `delete()`, `force_delete()`, `restore()`, `refresh()` |
 | `Fillable` | `fill()`, `set_<field>()` per-field setters |
 | `Serializes` | `to_public()`, `to_json()`, `to_public_json()` |
 | `Replicates` | `replicate()` |
 | `HasTimestamps` | `touch()` |
+| `FromQueryResult` | SeaORM's row-to-model deserialization |
+| `ModelTrait` | SeaORM's `get()` / `try_set()` on column enum |
 
 ---
 
@@ -187,9 +207,9 @@ let user = user.refresh(&db).await?;    // re-fetch from DB
 // ── Touch (update updated_at only) ──
 let user = user.touch(&db).await?;
 
-// ── Replicate (clone + id = 0) ──
+// ── Replicate (clone + retain id) ──
 let dup = user.replicate();
-let dup = dup.save(&db).await?;         // new row
+let dup = dup.save(&db).await?;         // new row if id=0
 
 // ── Bulk fill ──
 let user = user.fill(serde_json::json!({
@@ -205,12 +225,62 @@ let user = user.fill(serde_json::json!({
 | `save()` | `save(self, db) -> Result<Self>` | INSERT if id==0, else UPDATE. Returns back-filled instance |
 | `insert()` | `insert(self, db) -> Result<Self>` | Force INSERT, ignore current id |
 | `update()` | `update(self, db) -> Result<Self>` | Force UPDATE, error if id==0 |
-| `delete()` | `delete(self, db) -> Result<()>` | DELETE the row, consumes self |
+| `delete()` | `delete(self, db) -> Result<()>` | Soft-delete if enabled, else hard DELETE. Consumes self |
+| `force_delete()` | `force_delete(self, db) -> Result<()>` | Hard DELETE, bypassing soft deletes |
+| `restore()` | `restore(self, db) -> Result<Self>` | Restore a soft-deleted record (sets `deleted_at = NULL`) |
 | `refresh()` | `refresh(self, db) -> Result<Self>` | Re-fetch current row from database |
-| `replicate()` | `replicate(&self) -> Self` | Clone with id reset to 0 |
+| `replicate()` | `replicate(&self) -> Self` | Clone the model |
 | `touch()` | `touch(self, db) -> Result<Self>` | Only update `updated_at` |
 | `fill()` | `fill(self, data: Value) -> Self` | Bulk-assign fields from JSON |
 | `set_<field>()` | `set_name(self, val) -> Self` | Set a single field (chainable) |
+
+---
+
+## Soft Deletes
+
+Add `soft_deletes` to your container attribute to enable soft-delete behavior. An implicit `deleted_at` column is added automatically (or use a custom column name).
+
+```rust
+#[derive(Model, Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[model(table = "users", soft_deletes)]
+struct User {
+    #[model(id)] pub id: i32,
+    pub name: String,
+}
+
+// all() → automatically filters to WHERE deleted_at IS NULL
+let active = User::all(&db).await?;
+
+// find() → also filters trashed records
+let found = User::find(&db, 1).await?; // None if soft-deleted
+
+// Include trashed records
+let all = User::all_with_trashed(&db).await?;
+
+// Only trashed records
+let trashed = User::all_only_trashed(&db).await?;
+
+// Soft delete
+user.delete(&db).await?;  // SET deleted_at = NOW()
+
+// Hard delete (bypass soft deletes)
+user.force_delete(&db).await?;  // DELETE FROM
+
+// Restore a trashed record
+let restored = trashed.restore(&db).await?; // SET deleted_at = NULL
+
+// query() automatically filters soft-deleted records
+let results: Vec<User> = User::query()
+    .where_str("name", "Alice")
+    .get(&db).await?;
+
+// Query with trashed records
+let results: Vec<User> = User::query_with_trashed()
+    .get(&db).await?;
+
+// destroy() also soft-deletes when enabled
+User::destroy(&db, [1, 2, 3]).await?; // UPDATE SET deleted_at = NOW()
+```
 
 ---
 
@@ -234,7 +304,7 @@ let public = user.to_public();
 
 ## QueryBuilder
 
-`QueryBuilder<E>` wraps SeaORM 2.0's type-safe `Select<E>`. All methods are chainable.
+`QueryBuilder` wraps SeaORM 2.0 / sea-query expressions. All methods are chainable.
 
 ### Query Entry
 
@@ -243,6 +313,9 @@ use ravel_eloquent::Model;
 
 let qb = User::query();                        // SELECT * FROM "users"
 let qb = User::query().where_str("active", true); // with WHERE
+
+// With soft deletes enabled, query() automatically adds WHERE deleted_at IS NULL
+let qb = User::query_with_trashed();           // includes soft-deleted records
 ```
 
 ### WHERE Clauses
@@ -287,8 +360,13 @@ User::query()
 ### Aggregates
 
 ```rust
-User::query().count(&db).await?;     // → u64
-User::query().exists(&db).await?;    // → bool
+User::query().count(&db).await?;                        // → u64
+User::query().exists(&db).await?;                       // → bool
+User::query().sum(UserColumn::Age, &db).await?;         // → f64
+User::query().avg(UserColumn::Age, &db).await?;         // → f64
+User::query().min(UserColumn::Id, &db).await?;          // → f64
+User::query().max(UserColumn::Id, &db).await?;          // → f64
+User::query().group_by(UserColumn::TeamId).get(&db).await?;
 ```
 
 ### Pagination
@@ -301,38 +379,72 @@ let page: Page<User> = User::query()
     .paginate(&db, 1, 15).await?;
 
 assert!(page.has_more());
-println!("Page {} of {}", page.page, page.last_page());
 for user in page.items {
     // ...
 }
 ```
 
-### JOIN
+### Eager Loading — `.with()`
 
 ```rust
-use ravel_eloquent::QueryBuilder;
-use sea_orm::JoinType;
-
-// join related entities defined in the SeaORM relation model
-User::query()
-    .inner_join::<Post>(JoinType::InnerJoin)
+// Eager-load relations with the main query
+let users: Vec<User> = User::query()
+    .where_str("active", true)
+    .with("posts")
+    .with("roles")
     .get(&db).await?;
+
+// Also available as a static method
+let users = User::all_with(&db, &["posts", "roles"]).await?;
+
+// Access eager-loaded data through the relation field
+for user in &users {
+    println!("{} has {} posts", user.name, user.posts.len());
+    for post in user.posts.iter() {
+        println!("  - {}", post.title);
+    }
+}
 ```
 
 ### Underlying SeaORM Access
 
-Use `.into_select()` to get the raw SeaORM `Select<E>` for advanced queries:
+Use `.into_select()` to get the raw `sea_query::SelectStatement` for advanced queries:
 
 ```rust
-use sea_orm::*;
-
-let select: Select<User> = User::query().into_select();
-// Use any SeaORM API directly
+let select = User::query().into_select();
+// Use any sea-query API directly
 ```
 
 ---
 
 ## Relationships
+
+### Defining Relationships
+
+```rust
+#[derive(Model, Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[model(table = "users")]
+struct User {
+    #[model(id)] pub id: i32,
+    pub name: String,
+
+    // One-to-Many: User has many Posts
+    #[model(has_many)]
+    pub posts: ravel_eloquent::HasMany<Post>,
+
+    // One-to-One: User has one Profile
+    #[model(has_one)]
+    pub profile: ravel_eloquent::HasOne<Profile>,
+
+    // Belongs-To: User belongs to a Team
+    #[model(belongs_to, from = "team_id", to = "id")]
+    pub team: ravel_eloquent::HasOne<Team>,
+
+    // Many-to-Many: User has many Roles via role_user pivot
+    #[model(has_many, via = "role_user")]
+    pub roles: ravel_eloquent::BelongsToMany<Role>,
+}
+```
 
 ### Lazy Loading — `RelationQuery<R>`
 
@@ -358,6 +470,21 @@ let draft_count = user.posts()
     .count(&db).await?;
 
 let has_posts = user.posts().exists(&db).await?;
+```
+
+### Many-to-Many: Pivot Operations
+
+```rust
+let user = User::find(&db, 1).await?;
+
+// Attach roles to this user
+user.attach("roles", &[1, 2, 3], &db).await?;
+
+// Detach specific roles
+user.detach("roles", &[2], &db).await?;
+
+// Sync: detach all, then attach only the given set
+user.sync("roles", &[1, 3], &db).await?;
 ```
 
 ### RelationQuery Methods
@@ -398,10 +525,10 @@ where
 
 | Trait | Key methods | Kind |
 |-------|-------------|------|
-| `ModelMeta` | `table_name()`, `columns()`, `id_column()`, `public_columns()` | Metadata |
-| `ModelExt` | `find()`, `find_or_fail()`, `all()`, `create()`, `destroy()` | Static CRUD |
-| `ActiveModelExt` | `save()`, `insert()`, `update()`, `delete()`, `refresh()` | Instance writes |
+| `ModelMeta` | `table_name()`, `columns()`, `id_column()`, `public_columns()`, `find_column()`, `soft_delete_column()` | Metadata |
+| `ModelExt` | `find()`, `find_or_fail()`, `all()`, `all_with_trashed()`, `all_only_trashed()`, `create()`, `destroy()` | Static CRUD |
+| `ActiveModelExt` | `save()`, `insert()`, `update()`, `delete()`, `force_delete()`, `restore()`, `refresh()` | Instance writes |
 | `Fillable` | `fill()`, `set_<field>()` | Mass assignment |
 | `Serializes` | `to_public()`, `to_json()`, `to_public_json()` | JSON |
-| `Replicates` | `replicate()` | Clone + reset id |
+| `Replicates` | `replicate()` | Clone model |
 | `HasTimestamps` | `touch()` | Update timestamps |

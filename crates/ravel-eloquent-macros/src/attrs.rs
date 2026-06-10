@@ -85,6 +85,17 @@ pub enum RelationKind {
         to: String,
         table: Option<String>,
     },
+    BelongsToMany {
+        entity_type: Type,
+        /// Pivot/junction table name.
+        via: String,
+        /// FK on pivot pointing to this model.
+        foreign_key: Option<String>,
+        /// FK on pivot pointing to the related model.
+        related_key: Option<String>,
+        /// Explicit related table override.
+        table: Option<String>,
+    },
 }
 
 /// Parsed attributes for a single struct field.
@@ -113,6 +124,8 @@ pub struct ModelAttrs {
     pub table_name: String,
     pub fields: Vec<FieldAttr>,
     pub has_timestamps: bool,
+    pub has_soft_deletes: bool,
+    pub soft_delete_column: String,
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -141,7 +154,7 @@ pub fn extract_first_generic_arg(ty: &Type) -> Option<Type> {
     None
 }
 
-/// Detect `HasMany<T>` or `HasOne<T>` from a field type.
+/// Detect `HasMany<T>`, `HasOne<T>`, or `BelongsToMany<T>` from a field type.
 ///
 /// Returns `None` for any other type.
 pub fn detect_relation(ty: &Type) -> Option<RelationKind> {
@@ -161,6 +174,16 @@ pub fn detect_relation(ty: &Type) -> Option<RelationKind> {
             entity_type,
             table: None,
         }),
+        "BelongsToMany" => {
+            // Can't be complete without via — will be filled by attrs
+            Some(RelationKind::BelongsToMany {
+                entity_type,
+                via: String::new(),
+                foreign_key: None,
+                related_key: None,
+                table: None,
+            })
+        }
         _ => None,
     }
 }
@@ -188,25 +211,34 @@ pub fn to_pascal_case(s: &str) -> String {
 
 /// Parse the `#[model(table = "...")]` container attribute.
 ///
-/// Returns `(table_name, has_timestamps)`.
-fn parse_container_attrs(attrs: &[Attribute]) -> Result<(String, bool), syn::Error> {
+/// Returns `(table_name, has_timestamps, has_soft_deletes, soft_delete_column)`.
+fn parse_container_attrs(attrs: &[Attribute]) -> Result<(String, bool, bool, String), syn::Error> {
     for attr in attrs {
         if !attr.path().is_ident("model") {
             continue;
         }
         let mut table: Option<String> = None;
         let mut has_timestamps = false;
+        let mut has_soft_deletes = false;
+        let mut soft_delete_column = "deleted_at".to_string();
         attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("table") {
                 let s: syn::LitStr = meta.value()?.parse()?;
                 table = Some(s.value());
             } else if meta.path.is_ident("timestamps") {
                 has_timestamps = true;
+            } else if meta.path.is_ident("soft_deletes") {
+                has_soft_deletes = true;
+                // Optional: #[model(soft_deletes = "deleted_on")]
+                if meta.input.peek(syn::Token![=]) {
+                    let s: syn::LitStr = meta.value()?.parse()?;
+                    soft_delete_column = s.value();
+                }
             }
             Ok(())
         })?;
         if let Some(t) = table {
-            return Ok((t, has_timestamps));
+            return Ok((t, has_timestamps, has_soft_deletes, soft_delete_column));
         }
     }
     Err(syn::Error::new(
@@ -228,6 +260,8 @@ fn apply_meta(
     relation: &mut Option<RelationKind>,
     pending_from: &mut Option<String>,
     pending_to: &mut Option<String>,
+    pending_foreign_key: &mut Option<String>,
+    pending_related_key: &mut Option<String>,
     field_type: &syn::Type,
 ) {
     match meta {
@@ -309,9 +343,18 @@ fn apply_meta(
             } else if nv.path.is_ident("via") {
                 if let syn::Expr::Lit(expr_lit) = &nv.value
                     && let syn::Lit::Str(s) = &expr_lit.lit
-                    && let Some(RelationKind::HasMany { via, .. }) = relation
                 {
-                    *via = Some(s.value());
+                    let pivot = s.value();
+                    if let Some(RelationKind::HasMany { entity_type, table, .. }) = relation {
+                        // Upgrade HasMany+via → BelongsToMany
+                        *relation = Some(RelationKind::BelongsToMany {
+                            entity_type: entity_type.clone(),
+                            via: pivot,
+                            foreign_key: None,
+                            related_key: None,
+                            table: table.take(),
+                        });
+                    }
                 }
             } else if nv.path.is_ident("table") {
                 if let syn::Expr::Lit(expr_lit) = &nv.value
@@ -322,6 +365,7 @@ fn apply_meta(
                         Some(RelationKind::HasMany { table, .. }) => *table = Some(table_name),
                         Some(RelationKind::HasOne { table, .. }) => *table = Some(table_name),
                         Some(RelationKind::BelongsTo { table, .. }) => *table = Some(table_name),
+                        Some(RelationKind::BelongsToMany { table, .. }) => *table = Some(table_name),
                         _ => {}
                     }
                 }
@@ -343,6 +387,26 @@ fn apply_meta(
                     *to = s.value();
                 } else if relation.is_none() {
                     *pending_to = Some(s.value());
+                }
+            } else if nv.path.is_ident("foreign_key") {
+                if let syn::Expr::Lit(expr_lit) = &nv.value
+                    && let syn::Lit::Str(s) = &expr_lit.lit
+                {
+                    if let Some(RelationKind::BelongsToMany { foreign_key, .. }) = relation {
+                        *foreign_key = Some(s.value());
+                    } else {
+                        *pending_foreign_key = Some(s.value());
+                    }
+                }
+            } else if nv.path.is_ident("related_key") {
+                if let syn::Expr::Lit(expr_lit) = &nv.value
+                    && let syn::Lit::Str(s) = &expr_lit.lit
+                {
+                    if let Some(RelationKind::BelongsToMany { related_key, .. }) = relation {
+                        *related_key = Some(s.value());
+                    } else {
+                        *pending_related_key = Some(s.value());
+                    }
                 }
             }
         }
@@ -368,6 +432,8 @@ fn parse_field_attrs(field: &syn::Field) -> FieldAttr {
     let mut relation = auto_relation;
     let mut pending_from: Option<String> = None;
     let mut pending_to: Option<String> = None;
+    let mut pending_foreign_key: Option<String> = None;
+    let mut pending_related_key: Option<String> = None;
 
     for attr in &field.attrs {
         if !attr.path().is_ident("model") {
@@ -389,9 +455,21 @@ fn parse_field_attrs(field: &syn::Field) -> FieldAttr {
                     &mut relation,
                     &mut pending_from,
                     &mut pending_to,
+                    &mut pending_foreign_key,
+                    &mut pending_related_key,
                     &field_type,
                 );
             }
+        }
+    }
+
+    // Apply pending foreign_key / related_key to an auto-detected BelongsToMany
+    if let Some(RelationKind::BelongsToMany { foreign_key, related_key, .. }) = &mut relation {
+        if foreign_key.is_none() {
+            *foreign_key = pending_foreign_key;
+        }
+        if related_key.is_none() {
+            *related_key = pending_related_key;
         }
     }
 
@@ -410,7 +488,7 @@ fn parse_field_attrs(field: &syn::Field) -> FieldAttr {
 
 /// Collect all model attributes from a struct definition.
 pub fn parse_model(input: &syn::DeriveInput) -> Result<ModelAttrs, syn::Error> {
-    let (table_name, mut has_timestamps) = parse_container_attrs(&input.attrs)?;
+    let (table_name, mut has_timestamps, has_soft_deletes, soft_delete_column) = parse_container_attrs(&input.attrs)?;
     let mut fields = Vec::new();
 
     if let syn::Data::Struct(data) = &input.data
@@ -442,6 +520,8 @@ pub fn parse_model(input: &syn::DeriveInput) -> Result<ModelAttrs, syn::Error> {
         table_name,
         fields,
         has_timestamps,
+        has_soft_deletes,
+        soft_delete_column,
     })
 }
 
@@ -707,17 +787,17 @@ mod tests {
                 #[model(id)]
                 id: i32,
                 #[model(has_many, via = "role_user")]
-                roles: HasMany<Role>,
+                roles: BelongsToMany<Role>,
             }
             "#,
         );
         let attrs = parse_model(&input).unwrap();
         let roles = &attrs.fields[1];
         match &roles.relation {
-            Some(RelationKind::HasMany { via, .. }) => {
-                assert_eq!(via.as_deref(), Some("role_user"));
+            Some(RelationKind::BelongsToMany { via, .. }) => {
+                assert_eq!(via, "role_user");
             }
-            other => panic!("Expected HasMany with via, got {other:?}"),
+            other => panic!("Expected BelongsToMany with via, got {other:?}"),
         }
     }
 
