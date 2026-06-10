@@ -293,20 +293,27 @@ const MIDDLEWARE_TEMPLATE: &str = r#"use axum::{
 };
 
 /// {{name}} — custom middleware.
+///
+/// Apply via: `Route::new().middleware({{name}}::layer()).get("/", handler)`
 pub struct {{name}};
 
 impl {{name}} {
-    pub fn new() -> Self {
-        Self
+    /// Create the Axum-compatible middleware layer.
+    pub fn layer() -> axum::middleware::from_fn(handle)
+    where
+    {
+        axum::middleware::from_fn(handle)
     }
 }
 
 pub async fn handle(req: Request, next: Next) -> Response {
-    // TODO: pre-processing logic here
+    // Pre-processing: runs before the handler
+    tracing::info!("{{name}}: processing request {} {}", req.method(), req.uri());
 
     let response = next.run(req).await;
 
-    // TODO: post-processing logic here
+    // Post-processing: runs after the handler
+    tracing::info!("{{name}}: response status {}", response.status());
 
     response
 }
@@ -320,24 +327,37 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // TODO: apply the migration
-        // Example:
-        // manager.create_table(
-        //     Table::create()
-        //         .table(Users::Table)
-        //         .col(ColumnDef::new(Users::Id).integer().not_null().auto_increment().primary_key())
-        //         .col(ColumnDef::new(Users::Name).string().not_null())
-        //         .to_owned()
-        // ).await
-        Ok(())
+        manager
+            .create_table(
+                Table::create()
+                    .table({{name}}::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new({{name}}::Id).integer().not_null().auto_increment().primary_key())
+                    .col(ColumnDef::new({{name}}::Name).string().not_null())
+                    .col(ColumnDef::new({{name}}::CreatedAt).timestamp().not_null()
+                        .default(SimpleExpr::Keyword(Keyword::CurrentTimestamp)))
+                    .col(ColumnDef::new({{name}}::UpdatedAt).timestamp().not_null()
+                        .default(SimpleExpr::Keyword(Keyword::CurrentTimestamp)))
+                    .to_owned(),
+            )
+            .await
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // TODO: rollback the migration
-        // Example:
-        // manager.drop_table(Table::drop().table(Users::Table).to_owned()).await
-        Ok(())
+        manager
+            .drop_table(Table::drop().table({{name}}::Table).to_owned())
+            .await
     }
+}
+
+// ── Replace with your actual table definition ──────────────────
+#[derive(Iden)]
+enum {{name}} {
+    Table,
+    Id,
+    Name,
+    CreatedAt,
+    UpdatedAt,
 }
 "#;
 
@@ -345,14 +365,16 @@ const SEEDER_TEMPLATE: &str = r#"use anyhow::Result;
 use sea_orm::DatabaseConnection;
 
 /// Seeder: {{name}}
+pub async fn run(db: &DatabaseConnection) -> Result<()> {
+    tracing::info!("{{name}}: seeding started");
 
-pub async fn run(_db: &DatabaseConnection) -> Result<()> {
-    // TODO: insert seed data
-    // Example:
-    // use sea_orm::ActiveModelTrait;
-    // use sea_orm::ActiveValue::Set;
-    // let model = your_model::ActiveModel { name: Set("test".into()), ..Default::default() };
-    // model.insert(_db).await?;
+    // Example insert (replace with your seed data):
+    // db.execute_unprepared(
+    //     "INSERT INTO {{snake}}s (name, created_at, updated_at) \
+    //      VALUES ('example', datetime('now'), datetime('now'))"
+    // ).await?;
+
+    tracing::info!("{{name}}: seeding complete");
     Ok(())
 }
 "#;
@@ -382,22 +404,24 @@ impl ServiceProvider for {{name}} {
 }
 "#;
 
-const JOB_TEMPLATE: &str = r#"use ravel_support::queue::Job;
-use ravel_macros::Job;
+const JOB_TEMPLATE: &str = r#"use ravel_macros::Job;
 use serde::{Serialize, Deserialize};
-use async_trait::async_trait;
 
+/// Job: {{name}}
 #[derive(Serialize, Deserialize, Job)]
 #[job(name = "{{snake}}")]
 pub struct {{name}} {
-    // TODO: add payload fields
+    // Add your payload fields here — example:
+    // pub user_id: i32,
+    // pub email: String,
 }
 
-#[async_trait]
-impl Job for {{name}} {
-    async fn handle(&self) -> anyhow::Result<()> {
-        // TODO: implement job logic
-        tracing::info!("{{name}} job executed");
+impl {{name}} {
+    /// Core job logic — called by the generated `Job::handle()`.
+    pub async fn execute(&self) -> anyhow::Result<()> {
+        tracing::info!("{{name}}: executing");
+        // TODO: implement your job logic here
+
         Ok(())
     }
 }
@@ -409,52 +433,51 @@ use serde::Deserialize;
 
 /// Form request: {{name}}
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct {{name}} {
-    // TODO: define fields
-    // pub name: String,
-    // pub email: String,
+    pub name: String,
+    pub email: String,
+    // Add your fields here
 }
 
 impl FormRequest for {{name}} {
     fn rules() -> Vec<FieldRule> {
         vec![
-            // FieldRule::new("name", vec![Rule::Required, Rule::Min(3)]),
-            // FieldRule::new("email", vec![Rule::Required, Rule::Email]),
+            FieldRule::new("name", vec![Rule::Required, Rule::Min(3)]),
+            FieldRule::new("email", vec![Rule::Required, Rule::Email]),
         ]
     }
 
+    // Optional — uncomment to customize:
+    //
     // fn authorize(&self) -> bool {
-    //     true
+    //     self.role == "admin"
     // }
-
+    //
     // fn messages() -> std::collections::HashMap<String, String> {
     //     let mut m = std::collections::HashMap::new();
-    //     m.insert("name.required".into(), "Name is required".into());
+    //     m.insert("name.required".into(), "Please enter your name".into());
     //     m
     // }
 }
 "#;
 
-const MODEL_TEMPLATE: &str = r#"use sea_orm::entity::prelude::*;
+const MODEL_TEMPLATE: &str = r#"use ravel_eloquent::Model;
+use serde::{Deserialize, Serialize};
 
 /// Model: {{name}}
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
-#[sea_orm(table_name = "{{snake}}")]
-pub struct Model {
-    #[sea_orm(primary_key)]
+#[derive(Model, Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+#[model(table = "{{snake}}s")]
+pub struct {{name}} {
+    #[model(id)]
     pub id: i32,
-    // TODO: add columns
+    // Add your columns here — example:
     // pub name: String,
+    // #[model(string, 254, unique)]
     // pub email: String,
-    // pub created_at: DateTime,
-    // pub updated_at: DateTime,
+    // #[model(nullable, text)]
+    // pub bio: Option<String>,
 }
-
-#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
-
-impl ActiveModelBehavior for ActiveModel {}
 "#;
 
 const CARGO_TOML_TEMPLATE: &str = r#"[package]
@@ -465,6 +488,8 @@ edition = "2024"
 [dependencies]
 ravel-core = { path = "../ravel-core" }
 ravel-http = { path = "../ravel-http" }
+ravel-eloquent = { path = "../ravel-eloquent" }
+ravel-facades = { path = "../ravel-facades" }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
@@ -691,7 +716,7 @@ mod tests {
         g.scaffold_seeder("UserSeeder").unwrap();
 
         let content = std::fs::read_to_string(tmp.join("database/seeders/UserSeeder.rs")).unwrap();
-        assert!(content.contains("pub async fn run(_db: &DatabaseConnection)"));
+        assert!(content.contains("pub async fn run(db: &DatabaseConnection)"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
