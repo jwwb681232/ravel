@@ -61,18 +61,27 @@ my_app/
 
 ### `ravel serve`
 
-Builds and runs the application with `cargo run`:
+Starts the development server. Reads `[server]` configuration from `config/app.toml`:
+
+```toml
+# config/app.toml
+[server]
+host = "127.0.0.1"
+port = 3000
+```
 
 ```bash
 ravel serve
+# 🚀 Starting server...
+#    http://127.0.0.1:3000
+#    Press Ctrl+C to stop
 ```
 
-Opens `http://127.0.0.1:3000` in your browser after the server starts.
+Warns if the port is already in use.
 
 ### `ravel route:list`
 
-Scans the `routes/` directory and prints every registered route with its HTTP
-method and path:
+Scans the `routes/` directory and prints registered routes:
 
 ```bash
 ravel route:list
@@ -81,16 +90,20 @@ ravel route:list
 Output:
 
 ```
-  GET  /
-  GET  /users
-  POST /users
-  GET  /users/{id}
+📋 Registered Routes
+--------------------------------------------------------------
+  📄 routes/web.rs
+     GET      /
+     POST     /users
+     DELETE   /users/{id}
 ```
+
+For in-process introspection, use `ravel_facades::Route::list()` which returns
+`Vec<RouteEntry>` — useful for health-check endpoints.
 
 ### `ravel key:generate`
 
-Generates a random 256-bit key encoded as a `base64:` string, suitable for use
-with `Application::with_app_key()`:
+Generates a cryptographically random 256-bit key (via `rand::thread_rng()`) encoded as base64:
 
 ```bash
 ravel key:generate

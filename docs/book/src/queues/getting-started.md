@@ -35,8 +35,7 @@ needs (e.g. a `user_id`, an email address, a file path).
 
 ## Derive Macro
 
-The `#[derive(Job)]` macro generates the trait implementation for you. Use
-`#[job(...)]` attributes to configure the job metadata:
+The `#[derive(Job)]` macro generates the entire `Job` trait implementation. Use `#[job(...)]` attributes to configure metadata:
 
 ```rust
 use ravel_macros::Job;
@@ -48,17 +47,23 @@ struct SendWelcomeEmail {
     user_id: u32,
     email: String,
 }
+
+impl SendWelcomeEmail {
+    /// Core logic — called automatically by the generated handle().
+    pub async fn execute(&self) -> anyhow::Result<()> {
+        tracing::info!("Sending welcome email to {}", self.email);
+        Ok(())
+    }
+}
 ```
 
-When you omit an attribute the macro falls back to sensible defaults:
+When you omit attributes the macro falls back to sensible defaults:
 
 - **name** — snake_case of the struct name (e.g. `send_welcome_email`)
 - **queue** — `"default"`
 - **max_attempts** — `3`
 
-The `#[async_trait]` implementation, the `handle()` method body, and the
-`name()` / `queue()` / `max_attempts()` static methods are all generated —
-you only need to write `handle()`.
+> **Note:** Do **not** manually `impl Job` when using `#[derive(Job)]` — the macro already generates it. Write an inherent `pub async fn execute(&self)` method instead.
 
 ## Job Serialization
 
@@ -113,24 +118,46 @@ Queue::dispatch_later(
 `dispatch_later` accepts any `chrono::Duration`. The job will not be processed
 until the delay has elapsed.
 
-## In-Memory Driver
+## Redis Driver
 
-By default, `with_queue()` registers the **in-memory driver** — a
-`VecDeque<JobPayload>` behind a `Mutex`. It works out of the box with no
-external dependencies. All jobs live in process memory, so they are lost when
-the process exits.
+For production, use the **Redis driver** to persist jobs across process restarts and enable multiple workers. Enable the `redis` feature:
 
-For production, swap in a persistent driver (Redis, database) by implementing
-the `QueueDriver` trait.
+```toml
+ravel-support = { features = ["redis"] }
+```
+
+```rust
+use ravel_support::queue::{Queue, RedisDriver};
+
+// Connect and create queue
+let queue = Queue::redis("redis://127.0.0.1:6379").await?;
+queue.register::<SendWelcomeEmail>();
+queue.dispatch(SendWelcomeEmail { ... }).await?;
+queue.run().await;
+```
+
+How it works:
+
+- Active jobs are stored in a Redis **LIST** (`RPUSH` / `LPOP` — atomic)
+- Delayed jobs are stored in a **ZSET** (score = unix timestamp)
+- On `pop()`, ready delayed jobs automatically migrate to the main LIST
+- Multiple workers can safely consume from the same Redis instance
+
+### Redis Key Format
+
+```
+ravel:queue:{name}          →  LIST   — active jobs
+ravel:queue:{name}:delayed  →  ZSET   — delayed jobs (score = Unix ms)
+```
+
+## In-Memory Driver (Development)
 
 ## Example: Welcome Email Job
 
 ```rust
-use ravel_support::queue::Job;
 use ravel_macros::Job;
 use ravel_facades::Queue;
 use serde::{Serialize, Deserialize};
-use async_trait::async_trait;
 
 #[derive(Serialize, Deserialize, Job)]
 #[job(name = "send_welcome", queue = "mail", max_attempts = 3)]
@@ -139,16 +166,14 @@ struct SendWelcomeEmail {
     email: String,
 }
 
-#[async_trait]
-impl Job for SendWelcomeEmail {
-    async fn handle(&self) -> anyhow::Result<()> {
-        // Build and send the email using self.email, self.user_id ...
+impl SendWelcomeEmail {
+    pub async fn execute(&self) -> anyhow::Result<()> {
         tracing::info!("Sending welcome email to {}", self.email);
         Ok(())
     }
 }
 
-// In your service provider or route handler:
+// Dispatch:
 Queue::dispatch(SendWelcomeEmail {
     user_id: 42,
     email: "alice@example.com".into(),

@@ -2,9 +2,6 @@
 
 [Introduction](README.md)
 
-# Quick Tour
-- [Building a Blog](quick-tour/blog.md)
-
 # Getting Started
 - [Installation](getting-started/installation.md)
 - [Quick Start](getting-started/quick-start.md)
@@ -24,18 +21,9 @@
 - [Validation](the-basics/validation.md)
 - [Error Handling](the-basics/error-handling.md)
 
-# Digging Deeper
-- [Cache](digging-deeper/cache.md)
-- [Events](digging-deeper/events.md)
-- [Encryption](digging-deeper/encryption.md)
-- [Hashing](digging-deeper/hashing.md)
-- [Logging](digging-deeper/logging.md)
-- [Collections](digging-deeper/collections.md)
-- [Helpers](digging-deeper/helpers.md)
-
 # Security
-- [Authentication](security/authentication.md)
 - [Sessions](security/sessions.md)
+- [Authentication](security/authentication.md)
 - [CSRF Protection](security/csrf.md)
 - [Rate Limiting](security/rate-limiting.md)
 
@@ -43,19 +31,26 @@
 - [Getting Started](database/getting-started.md)
 - [Eloquent ORM](database/eloquent.md)
 - [Query Builder](database/query-builder.md)
+- [Relationships](database/eloquent.md#relationships)
+- [Scopes](database/eloquent.md#scopes--reusable-query-fragments)
 - [Pagination](database/pagination.md)
 - [Migrations](database/migrations.md)
 - [Seeding](database/seeding.md)
 - [Schema Builder](database/schema-builder.md)
 
+# Digging Deeper
+- [Cache](digging-deeper/cache.md)
+- [Encryption](digging-deeper/encryption.md)
+- [Hashing](digging-deeper/hashing.md)
+- [Logging](digging-deeper/logging.md)
+- [Helpers](digging-deeper/helpers.md)
+
 # Queues
 - [Getting Started](queues/getting-started.md)
-- [Workers](queues/workers.md)
 - [Scheduling](queues/scheduling.md)
 
 # Testing
 - [Getting Started](testing/getting-started.md)
-- [Facade Testing](testing/facade-testing.md)
 
 # CLI
 - [Artisan Commands](cli/artisan.md)

@@ -1,125 +1,109 @@
 # Sessions
 
-Ravel uses **encrypted cookie sessions** — session data is serialised as JSON, encrypted with AES-256-GCM, and stored client-side. This requires no server-side storage and works out of the box once you configure an application key.
+Ravel supports **two session drivers**:
 
-## Configuration
+1. **Cookie** (default) — session data is serialised as JSON, encrypted with AES-256-GCM, and stored in the client cookie. No server-side storage needed.
+2. **Redis** — session ID stored in cookie, data stored in Redis. Enables horizontal scaling across multiple workers.
 
-Sessions are configured via `SessionConfig` and wired in as a Tower layer:
+## Cookie Driver
+
+No database required. Data is encrypted in the cookie itself.
 
 ```rust
 use ravel_http::session::SessionConfig;
 use ravel_core::crypt::Crypt;
 
-let crypt = Crypt::from_app_key("base64:...")?;
-let session_config = SessionConfig::new(crypt)
-    .cookie_name("myapp_session")   // default: "ravel_session"
-    .max_age(3600);                  // default: 7200 (2 hours)
+let crypt = Crypt::from_app_key()?;
+let config = SessionConfig::new(crypt)
+    .cookie_name("ravel_session")
+    .max_age(7200); // 2 hours
 
-// Apply to routes:
-Route::middleware(session_config.layer());
+Route::new()
+    .layer(config.layer())
+    .build();
 ```
 
-The default session lifetime is **2 hours** (7200 seconds). The cookie is marked `HttpOnly`, `SameSite=Lax`, and `Secure` for non-localhost connections.
+## Redis Driver
 
-## The Session Facade
+Enable the `redis` feature in `Cargo.toml`:
 
-Inside an HTTP handler, use the `Session` facade for read and write operations:
+```toml
+ravel-http = { features = ["redis"] }
+```
 
 ```rust
-use ravel_facades::Session;
+let config = SessionConfig::redis("redis://127.0.0.1:6379", crypt).await?;
+let config = config
+    .cookie_name("ravel_session")
+    .max_age(7200);
 
-// Store a value
-Session::put("user_preferences", &serde_json::json!({
-    "theme": "dark",
-    "locale": "en"
-}));
-
-// Read a value
-let theme: Option<String> = Session::get("theme");
-let locale: Option<String> = Session::get("locale");
-
-// Check if a key exists
-if Session::has("user_preferences") {
-    // preferences exist
-}
-
-// Remove a key
-Session::forget("user_preferences");
+Route::new()
+    .layer(config.layer())
+    .build();
 ```
 
-## Using the Session Extractor
+How it works:
 
-For more control, use the Axum `Session` extractor. This gives you mutable access:
+- Cookie contains only a **UUID session ID**
+- Data is stored at `ravel:session:{id}` with TTL = `max_age`
+- Multiple workers share sessions via atomic Redis `SET`/`GET`
+
+## Reading and Writing Data
 
 ```rust
 use ravel_http::session::Session;
 
-async fn save_preferences(
-    mut session: Session,
-    axum::Form(form): axum::Form<Preferences>,
-) -> impl IntoResponse {
-    session.put("theme", &form.theme);
-    session.put("locale", &form.locale);
-    "Preferences saved"
-}
+async fn handler(mut session: Session) -> impl IntoResponse {
+    // Store
+    session.put("user_id", 42u32);
+    session.put("theme", "dark");
 
-async fn get_preferences(session: Session) -> impl IntoResponse {
-    let theme: Option<String> = session.get("theme");
-    let locale: Option<String> = session.get("locale");
-    format!("theme={:?}, locale={:?}", theme, locale)
+    // Retrieve
+    let user_id: Option<u32> = session.get("user_id");
+
+    // Check
+    if session.has("theme") { ... }
+
+    // Remove
+    session.forget("theme");
+
+    // All keys
+    for key in session.keys() {
+        println!("{key}");
+    }
+
+    "ok"
 }
 ```
 
 ## Flash Messages
 
-Flash messages are stored for the **next request only** and are consumed on first read. They are ideal for success/error messages after a form submit or redirect:
+Flash messages persist for exactly **one** subsequent request, then disappear. Useful for success/error feedback after redirects:
 
 ```rust
-use ravel_facades::{Session, redirect};
+// Store a flash message
+session.flash("status", "Profile updated!");
 
-async fn submit_form() -> impl IntoResponse {
-    // Process form ...
-    Session::flash("success", &"Form submitted successfully!");
-    redirect("/dashboard")
-}
+// Next request — read (consumes the message)
+let status: Option<String> = session.flashed("status");
+// → Some("Profile updated!")
 
-async fn dashboard() -> impl IntoResponse {
-    let message: Option<String> = Session::flashed("success");
-    match message {
-        Some(msg) => format!("<div class='alert'>{}</div>", msg),
-        None => "Dashboard".into(),
-    }
-}
+// Second read returns None
+let again: Option<String> = session.flashed("status");
+// → None
 ```
 
-The `flashed` method consumes the value on first read — subsequent calls return `None`. The low-level extractor works the same way:
+## Session Configuration Reference
 
-```rust
-let msg: Option<String> = session.flashed("success");
+| Method | Default | Description |
+|--------|---------|-------------|
+| `cookie_name(name)` | `"ravel_session"` | Cookie name |
+| `max_age(secs)` | `7200` | Session TTL in seconds |
+
+### Cookie Attributes
+All sessions use: `HttpOnly; SameSite=Lax; Path=/; Max-Age={ttl}`
+
+### Redis key format
 ```
-
-## Example: Storing User Preferences
-
-```rust
-async fn save_theme(mut session: Session, axum::Query(params): axum::Query<HashMap<String, String>>) -> impl IntoResponse {
-    if let Some(theme) = params.get("theme") {
-        session.put("theme", theme);
-    }
-    redirect("/settings")
-}
-
-async fn settings(session: Session) -> impl IntoResponse {
-    let theme: Option<String> = session.get("theme");
-    let theme_css = theme.unwrap_or_else(|| "light".into());
-    format!("<link rel='stylesheet' href='/css/{}.css'>", theme_css)
-}
-```
-
-## Outside HTTP Scope
-
-Like `Auth`, the `Session` facade returns safe defaults outside request handlers:
-
-```rust
-assert_eq!(Session::get::<String>("key"), None);
-Session::put("key", &"value"); // no-op
+ravel:session:{session_id}  →  JSON-encoded SessionData
 ```

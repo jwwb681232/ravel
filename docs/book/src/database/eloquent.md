@@ -505,6 +505,76 @@ user.sync("roles", &[1, 3], &db).await?;
 
 ---
 
+## Scopes — Reusable Query Fragments
+
+Scopes let you extract commonly-used query constraints into reusable types:
+
+```rust
+use ravel_eloquent::Scope;
+
+#[derive(Clone)]
+struct Active;
+
+impl Scope<User> for Active {
+    fn apply(self, qb: QueryBuilder) -> QueryBuilder {
+        qb.where_eq(UserColumn::Status, "active")
+    }
+}
+
+#[derive(Clone)]
+struct Popular {
+    min_posts: i32,
+}
+
+impl Scope<User> for Popular {
+    fn apply(self, qb: QueryBuilder) -> QueryBuilder {
+        qb.where_gt(UserColumn::PostCount, self.min_posts)
+    }
+}
+
+// Chain scopes with normal query methods
+let users = User::query()
+    .scope(Active)
+    .scope(Popular { min_posts: 10 })
+    .order_by_desc(UserColumn::CreatedAt)
+    .get(&db).await?;
+```
+
+## whereHas — Filter by Related Records
+
+`where_has` filters parent records based on the existence of matching related records:
+
+```rust
+// All users who have at least one post
+let users = User::query()
+    .where_has::<User>("posts", |qb| qb)
+    .get(&db).await?;
+
+// Users who have a published post
+let users = User::query()
+    .where_has::<User>("posts", |qb| {
+        qb.where_eq(PostColumn::Published, true)
+    })
+    .get(&db).await?;
+
+// OR variant
+let users = User::query()
+    .where_has::<User>("posts", |qb| qb)
+    .or_where_has::<User>("comments", |qb| qb)
+    .get(&db).await?;
+```
+
+### whereHas Methods
+
+| Method | Description |
+|--------|-------------|
+| `.where_has::<T>(rel, \|qb\| ...)` | Parent has related records matching filter |
+| `.or_where_has::<T>(rel, \|qb\| ...)` | OR variant |
+
+Supports `HasMany`, `HasOne`, and `BelongsTo` relations. BelongsToMany support is planned.
+
+---
+
 ## Traits at a Glance
 
 All traits are auto-implemented by `#[derive(Model)]`. Use them as trait bounds when writing generic functions:

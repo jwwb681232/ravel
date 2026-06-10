@@ -1,240 +1,175 @@
 # Validation
 
-Ravel provides a validation engine for verifying incoming request data. You can use the `Validator` directly, or integrate with `FormRequest` for automatic validation and 422 error responses.
+Ravel provides two approaches to validation:
 
-## Validation Rules
+1. **Validator** — direct, programmatic validation
+2. **FormRequest** — automatic JSON parsing + validation via Axum extractor
 
-The following rules are available in `ravel_http::validation`:
+Both support the same ruleset and produce 422 JSON responses on failure.
 
-| Rule | Description |
-|------|-------------|
-| `Rule::Required` | Field must be present and non-empty |
-| `Rule::Min(n)` | String length or numeric value must be at least `n` |
-| `Rule::Max(n)` | String length or numeric value must not exceed `n` |
-| `Rule::Email` | Value must resemble an email address (contains `@` and `.`) |
-| `Rule::Regex(pattern)` | Value must match the given regex |
-| `Rule::In(values)` | Value must be one of the listed strings |
+## FormRequest (Recommended)
 
-## Using the Validator Directly
-
-For one-off validation, create a `Validator` with field rules and validate a JSON value:
-
-```rust
-use ravel_http::validation::{Rule, FieldRule, Validator};
-use serde_json::json;
-
-let validator = Validator::new(vec![
-    FieldRule::new("username", vec![Rule::Required, Rule::Min(3), Rule::Max(50)]),
-    FieldRule::new("email", vec![Rule::Required, Rule::Email]),
-    FieldRule::new("age", vec![Rule::Min(18), Rule::Max(120)]),
-    FieldRule::new("role", vec![Rule::In(vec!["user".into(), "admin".into()])]),
-]);
-
-let data = json!({
-    "username": "alice",
-    "email": "alice@example.com",
-    "age": 25,
-    "role": "admin",
-});
-
-match validator.validate(&data) {
-    Ok(()) => println!("Valid!"),
-    Err(errors) => {
-        for e in &errors {
-            println!("{}: {}", e.field, e.message);
-        }
-    }
-}
-```
-
-### Custom Error Messages
-
-Pass custom messages keyed by `"{field}.{rule}"`:
-
-```rust
-use std::collections::HashMap;
-
-let mut custom_messages = HashMap::new();
-custom_messages.insert("username.required".into(), "Please choose a username".into());
-custom_messages.insert("email.email".into(), "Enter a valid email address".into());
-custom_messages.insert("age.min".into(), "You must be at least 18 years old".into());
-
-match validator.validate_with_messages(&data, &custom_messages) {
-    Ok(()) => println!("Valid!"),
-    Err(errors) => { /* uses custom messages */ }
-}
-```
-
-## FormRequest Trait
-
-For automatic validation in handlers, implement `FormRequest` on a deserializable struct and use the `Validated<T>` extractor:
+Derive `Deserialize` and implement `FormRequest`. The `Validated<T>` extractor handles parsing and validation:
 
 ```rust
 use ravel_http::form_request::{FormRequest, Validated};
 use ravel_http::validation::{FieldRule, Rule};
-use ravel_http::error::RavelError;
-use ravel_facades::Route;
-use axum::response::IntoResponse;
 use serde::Deserialize;
-use std::collections::HashMap;
 
-#[derive(Deserialize)]
-struct RegisterRequest {
-    name: String,
-    email: String,
-    password: String,
+#[derive(Debug, Deserialize)]
+pub struct CreateUserRequest {
+    pub name: String,
+    pub email: String,
+    pub password: String,
+    pub bio: Option<String>,
+    pub role_id: i32,
 }
 
-impl FormRequest for RegisterRequest {
+impl FormRequest for CreateUserRequest {
     fn rules() -> Vec<FieldRule> {
         vec![
-            FieldRule::new("name", vec![Rule::Required, Rule::Min(2), Rule::Max(100)]),
-            FieldRule::new("email", vec![Rule::Required, Rule::Email]),
-            FieldRule::new("password", vec![
+            FieldRule::new("name", vec![Rule::Required, Rule::Min(3)]),
+            FieldRule::new("email", vec![
                 Rule::Required,
-                Rule::Min(8),
-                Rule::Regex(r"[A-Z]".to_string()),
+                Rule::Email,
+                Rule::Unique { table: "users", column: "email", ignore_id: None },
+            ]).bail_on_first(),
+            FieldRule::new("password", vec![
+                Rule::Required, Rule::Min(8), Rule::Confirmed,
+            ]),
+            FieldRule::new("bio", vec![Rule::Max(500)]).nullable(),
+            FieldRule::new("role_id", vec![
+                Rule::Required,
+                Rule::Exists { table: "roles", column: "id" },
             ]),
         ]
     }
-
-    fn messages() -> HashMap<String, String> {
-        let mut m = HashMap::new();
-        m.insert("name.required".into(), "Your name is required".into());
-        m.insert("email.email".into(), "Please provide a valid email".into());
-        m.insert("password.min".into(), "Password must be at least 8 characters".into());
-        m.insert("password.regex".into(), "Password must contain at least one uppercase letter".into());
-        m
-    }
 }
 
-async fn register(
-    Validated(req): Validated<RegisterRequest>,
+// In your handler:
+async fn store(
+    State(state): State<AppState>,
+    Validated(req): Validated<CreateUserRequest>,
 ) -> Result<impl IntoResponse, RavelError> {
-    // req is guaranteed valid here
-    Ok(serde_json::json!({
-        "message": format!("Account created for {}", req.name),
-    }))
+    // req is guaranteed valid — email is unique, role exists, password confirmed
+    let user = User::create(serde_json::to_value(&req)?, &state.db).await?;
+    Ok((StatusCode::CREATED, Json(user)))
 }
-
-Route::post("/register", register);
 ```
 
-When validation fails, the handler returns a 422 response automatically:
-
+When validation fails:
 ```json
 {
     "message": "Validation failed",
     "errors": {
-        "password": [
-            "Password must contain at least one uppercase letter"
-        ],
-        "name": [
-            "Your name is required"
-        ]
+        "email": ["email has already been taken"],
+        "name": ["name is required"]
     }
 }
 ```
 
-## The `authorize()` Method
+## Direct Validator
 
-Override `authorize()` on your `FormRequest` to add access control. Return `false` to reject the request with a 403 Forbidden response:
+Use `Validator` directly for cases that don't fit the FormRequest pattern:
 
 ```rust
-#[derive(Deserialize)]
-struct AdminActionRequest {
-    action: String,
-}
+use ravel_http::validation::{Validator, FieldRule, Rule};
 
-impl FormRequest for AdminActionRequest {
-    fn rules() -> Vec<FieldRule> {
-        vec![FieldRule::new("action", vec![Rule::Required])]
-    }
+let validator = Validator::new(vec![
+    FieldRule::new("email", vec![Rule::Required, Rule::Email]),
+    FieldRule::new("age", vec![Rule::Min(18), Rule::Max(150)]),
+]);
 
-    fn authorize(&self) -> bool {
-        // Only allow requests during business hours
-        self.action != "delete-everything"
-    }
+let input = serde_json::json!({"email": "a@b.com", "age": 25});
+match validator.validate(&input) {
+    Ok(()) => { /* valid */ },
+    Err(errors) => { /* handle errors */ },
 }
 ```
 
-## Combining Rules
+## Validation Rules
 
-Multiple rules for a single field are evaluated independently. All failures are collected and returned:
+### Standard Rules
+
+| Rule | Description |
+|------|-------------|
+| `Required` | Field must be present and non-empty |
+| `Min(n)` | String length or number ≥ n |
+| `Max(n)` | String length or number ≤ n |
+| `Email` | Must contain `@` and `.` |
+| `Regex(pattern)` | Must match the given regex |
+| `In(values)` | Must be one of the listed values |
+
+### Database Rules (require `has_async_rules()` → validate_async)
+
+| Rule | Description |
+|------|-------------|
+| `Unique { table, column, ignore_id }` | Value must be unique; `ignore_id` excludes a record on update |
+| `Exists { table, column }` | Value must exist in the referenced table |
+
+### Field-Level Rules
+
+| Rule | Description |
+|------|-------------|
+| `Confirmed` | `{field}` must equal `{field}_confirmation` |
+
+## Field Modifiers
+
+Chain these on `FieldRule`:
 
 ```rust
-FieldRule::new("password", vec![
-    Rule::Required,
-    Rule::Min(8),
-    Rule::Max(128),
-    Rule::Regex(r"[a-z]".to_string()),
-    Rule::Regex(r"[0-9]".to_string()),
-])
+FieldRule::new("email", vec![...])
+    .bail_on_first()   // Stop after first failing rule
+    .nullable()        // Skip rules if value is null/empty/missing
+    .sometimes()       // Skip rules if field is missing; validate when present
 ```
 
-## Complete Example: User Registration
+| Modifier | Behavior |
+|----------|----------|
+| `bail_on_first()` | Stop at first error for this field |
+| `nullable()` | Empty / null / missing → skip all rules |
+| `sometimes()` | Missing → skip; present → validate normally |
+
+## Database Validation
+
+Unique and Exists rules require a database connection. When `Validated<T>` detects async rules, it automatically uses `validate_async()`.
+
+Your AppState must implement `HasDb`:
 
 ```rust
-use ravel_http::form_request::{FormRequest, Validated};
-use ravel_http::validation::{FieldRule, Rule};
-use ravel_http::error::RavelError;
-use ravel_facades::Route;
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
-use serde::Deserialize;
-use std::collections::HashMap;
+use ravel_http::form_request::HasDb;
+use sea_orm::DatabaseConnection;
 
-#[derive(Deserialize, Debug)]
-struct UserRegistration {
-    username: String,
-    email: String,
-    password: String,
-    confirm_password: String,
-    age: u32,
+#[derive(Clone)]
+struct AppState {
+    db: DatabaseConnection,
 }
 
-impl FormRequest for UserRegistration {
-    fn rules() -> Vec<FieldRule> {
-        vec![
-            FieldRule::new("username", vec![
-                Rule::Required,
-                Rule::Min(3),
-                Rule::Max(30),
-                Rule::Regex(r"^[a-zA-Z0-9_]+$".to_string()),
-            ]),
-            FieldRule::new("email", vec![Rule::Required, Rule::Email]),
-            FieldRule::new("password", vec![
-                Rule::Required,
-                Rule::Min(8),
-                Rule::Max(128),
-            ]),
-            FieldRule::new("age", vec![Rule::Min(13), Rule::Max(150)]),
-        ]
-    }
-
-    fn messages() -> HashMap<String, String> {
-        let mut m = HashMap::new();
-        m.insert("username.required".into(), "Choose a username".into());
-        m.insert("username.regex".into(), "Username can only contain letters, numbers, and underscores".into());
-        m.insert("age.min".into(), "You must be at least 13 years old".into());
-        m
-    }
+impl HasDb for AppState {
+    fn db(&self) -> &DatabaseConnection { &self.db }
 }
-
-async fn register_user(
-    Validated(req): Validated<UserRegistration>,
-) -> Result<impl IntoResponse, RavelError> {
-    // Validate password confirmation separately
-    if req.password != req.confirm_password {
-        let mut errors = HashMap::new();
-        errors.insert("confirm_password".into(), vec!["Passwords do not match".into()]);
-        return Err(RavelError::validation_error(errors));
-    }
-
-    Ok((StatusCode::CREATED, serde_json::json!({
-        "message": format!("Welcome, {}!", req.username),
-    })))
-}
-
-Route::post("/auth/register", register_user);
 ```
+
+## Custom Messages
+
+```rust
+fn messages() -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    m.insert("name.required".into(), "Please enter your name".into());
+    m.insert("email.unique".into(), "This email is already registered".into());
+    m
+}
+```
+
+Key format: `"{field}.{rule_name}"` — e.g. `"email.required"`, `"email.unique"`, `"password.confirmed"`.
+
+## Authorization
+
+```rust
+fn authorize(&self) -> bool {
+    // Only admins can use this form:
+    self.role == "admin"
+}
+```
+
+Returns 403 Forbidden on failure.
