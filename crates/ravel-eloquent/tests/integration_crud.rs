@@ -103,7 +103,46 @@ async fn test_delete_by_id() {
         .await
         .unwrap();
 
-    TestUser::delete_by_id(&db, user.id).await.unwrap();
+    TestUser::destroy(&db, [user.id]).await.unwrap();
     let found = TestUser::find(&db, user.id).await.unwrap();
     assert!(found.is_none());
+}
+
+#[tokio::test]
+async fn test_aggregates() {
+    let db = setup_db().await;
+
+    for i in 0..5 {
+        TestUser::create(
+            serde_json::json!({"name": format!("U{}", i), "email": format!("u{}@t.com", i)}), &db,
+        ).await.unwrap();
+    }
+
+    let max_id: f64 = TestUser::query().max(TestUserColumn::Id, &db).await.unwrap();
+    assert!(max_id >= 5.0);
+
+    let min_id: f64 = TestUser::query().min(TestUserColumn::Id, &db).await.unwrap();
+    assert!(min_id >= 1.0);
+
+    let sum: f64 = TestUser::query().sum(TestUserColumn::Id, &db).await.unwrap();
+    assert!(sum >= 15.0); // 1+2+3+4+5
+
+    let avg: f64 = TestUser::query().avg(TestUserColumn::Id, &db).await.unwrap();
+    assert!(avg >= 1.0);
+}
+
+#[tokio::test]
+async fn test_group_by() {
+    let db = setup_db().await;
+
+    TestUser::create(serde_json::json!({"name": "A", "email": "a@t.com"}), &db).await.unwrap();
+    TestUser::create(serde_json::json!({"name": "B", "email": "b@t.com"}), &db).await.unwrap();
+
+    // group_by just tests it compiles and runs without error
+    let users: Vec<TestUser> = TestUser::query()
+        .group_by(TestUserColumn::Name)
+        .get(&db)
+        .await
+        .unwrap();
+    assert!(!users.is_empty());
 }

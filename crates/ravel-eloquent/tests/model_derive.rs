@@ -126,9 +126,9 @@ fn test_query_returns_query_builder() {
 }
 
 #[test]
-fn test_where_returns_query_builder() {
-    // r#where(col, val) returns QueryBuilder<Entity>
-    let _query = User::r#where("name", "Alice");
+fn test_where_str_returns_query_builder() {
+    // where_str(col, val) returns QueryBuilder
+    let _query = User::where_str("name", "Alice");
 }
 
 // ── Setter tests ───────────────────────────────────────────────────────────

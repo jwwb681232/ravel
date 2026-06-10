@@ -38,7 +38,7 @@
 │ ⑤ Trait 实现 (ActiveModelExt, ModelExt, ...)   │
 │ ⑥ 实例方法 (save/delete/setters)              │
 │ ⑦ 关系查询方法 (posts().get())                 │
-│ ⑧ 查询入口 (query/r#where)                    │
+│ ⑧ 查询入口 (query/where_str)                    │
 └──────┬──────────────────────────────────────────┘
        │
        ▼
@@ -53,7 +53,7 @@
 │ Serializes      — to_json(), to_public()        │
 │ Fillable        — fill(), set_xxx()             │
 │ HasRelations    — posts().get(), team().first() │
-│ Queryable       — query(), r#where()            │
+│ Queryable       — query(), where_str()            │
 └──────┬──────────────────────────────────────────┘
        │
        ▼
@@ -279,7 +279,7 @@ pub trait Serializes {
 ```rust
 pub trait Queryable: ModelMeta {
     fn query() -> Select<Self>;
-    fn r#where(col: &str, val: impl Into<Value>) -> Select<Self>;
+    fn where_eq(col: &str, val: impl Into<Value>) -> Select<Self>;
 }
 ```
 
@@ -426,11 +426,11 @@ pub struct RelationQuery<R> {
 
 impl<R: EntityTrait + ModelMeta> RelationQuery<R> {
     // 链式过滤
-    pub fn r#where(mut self, col: &str, val: impl Into<Value>) -> Self;
-    pub fn r#where_gt(self, col: &str, val: impl Into<Value>) -> Self;
-    pub fn r#where_in(self, col: &str, vals: Vec<impl Into<Value>>) -> Self;
-    pub fn r#where_null(self, col: &str) -> Self;
-    pub fn r#where_not_null(self, col: &str) -> Self;
+    pub fn where_eq(mut self, col: &str, val: impl Into<Value>) -> Self;
+    pub fn where_eq_gt(self, col: &str, val: impl Into<Value>) -> Self;
+    pub fn where_eq_in(self, col: &str, vals: Vec<impl Into<Value>>) -> Self;
+    pub fn where_eq_null(self, col: &str) -> Self;
+    pub fn where_eq_not_null(self, col: &str) -> Self;
     pub fn or_where(self, col: &str, val: impl Into<Value>) -> Self;
 
     // 排序
@@ -458,7 +458,7 @@ let user = User::find(&db, 1).await?;
 
 // 按需查，支持过滤排序
 let posts = user.posts()
-    .r#where("published", true)
+    .where_str("published", true)
     .latest("created_at")
     .limit(10)
     .get(&db).await?;
@@ -467,7 +467,7 @@ let team = user.team().first(&db).await?;
 
 // 聚合
 let draft_count = user.posts()
-    .r#where("published", false)
+    .where_str("published", false)
     .count(&db).await?;
 
 let has_posts = user.posts().exists(&db).await?;
@@ -481,7 +481,7 @@ let has_posts = user.posts().exists(&db).await?;
 // 1-1 关系 → LEFT JOIN
 // 1-N 关系 → batched IN 查询（避免行膨胀）
 let users = User::query()
-    .r#where("active", true)
+    .where_str("active", true)
     .with(Team)                       // belongs_to → LEFT JOIN
     .with(Post)                       // has_many  → batched IN
     .with_nested(Post, Comment)       // posts 下嵌套 comments
@@ -517,33 +517,33 @@ for user in users {
 
 ```rust
 User::query()                        // SELECT * FROM "users"
-User::r#where("active", true)        // query() + WHERE
-User::query().r#where("active", true) // 等价
+User::where_str("active", true)        // query() + WHERE
+User::query().where_str("active", true) // 等价
 ```
 
 ### 6.2 WHERE 条件
 
 ```rust
 // ==
-.r#where("age", 18)
+.where_str("age", 18)
 
 // 两参数版本（操作符 + 值）
-.r#where("age", ">=", 18)
+.where_str("age", ">=", 18)
 
 // 类型专用方法
-.r#where_gt("age", 18)
-.r#where_gte("age", 18)
-.r#where_lt("age", 65)
-.r#where_lte("age", 65)
-.r#where_ne("status", "deleted")
-.r#where_like("name", "%Alice%")
-.r#where_not_like("name", "%test%")
-.r#where_in("id", &[1, 2, 3])
-.r#where_not_in("id", &[4, 5])
-.r#where_between("age", 18, 65)
-.r#where_not_between("age", 0, 17)
-.r#where_null("deleted_at")
-.r#where_not_null("email")
+.where_str_gt("age", 18)
+.where_str_gte("age", 18)
+.where_str_lt("age", 65)
+.where_str_lte("age", 65)
+.where_str_ne("status", "deleted")
+.where_str_like("name", "%Alice%")
+.where_str_not_like("name", "%test%")
+.where_str_in("id", &[1, 2, 3])
+.where_str_not_in("id", &[4, 5])
+.where_str_between("age", 18, 65)
+.where_str_not_between("age", 0, 17)
+.where_str_null("deleted_at")
+.where_str_not_null("email")
 ```
 
 ### 6.3 复合条件
@@ -551,19 +551,19 @@ User::query().r#where("active", true) // 等价
 ```rust
 // AND — 链式就是 AND
 User::query()
-    .r#where("status", "active")
-    .r#where_gt("age", 18)
+    .where_str("status", "active")
+    .where_str_gt("age", 18)
 
 // OR
 User::query()
-    .r#where("status", "active")
+    .where_str("status", "active")
     .or_where("role", "admin")
 
 // 分组
 User::query()
-    .r#where("status", "active")
-    .r#where_group(|q| {
-        q.r#where("role", "admin")
+    .where_str("status", "active")
+    .where_str_group(|q| {
+        q.where_str("role", "admin")
          .or_where("role", "moderator")
     })
 ```
@@ -630,7 +630,7 @@ use sea_orm::*;
 
 User::query()
     .into_select()                     // 拿到 SeaORM Select<Entity>
-    .filter(users::Column::Age.gte(18))
+    .where_eq(users::Column::Age.gte(18))
     .left_join(teams::Entity)
     .all(&db).await?;
 ```

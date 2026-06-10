@@ -251,7 +251,7 @@ struct User {
 // Static CRUD
 let user = User::find_or_fail(&db, 1).await?;
 let all = User::all(&db).await?;
-User::delete_by_id(&db, 42).await?;
+User::destroy(&db, 42).await?;
 
 // Instance methods (consumptive, chainable)
 let user = User { id: 0, name: "Alice".into(), email: "a@e.com".into() };
@@ -261,13 +261,13 @@ user.delete(&db).await?;                   // DELETE
 
 // Query builder
 let users = User::query()
-    .filter(UserColumn::Active, true)
+    .where_eq(UserColumn::Active, true)
     .order_by_desc(UserColumn::CreatedAt)
     .limit(10).get(&db).await?;
 
 // Lazy-loading relations
 let posts = user.posts()
-    .filter(PostColumn::Published, true)
+    .where_eq(PostColumn::Published, true)
     .latest("created_at")
     .limit(5).get(&db).await?;
 let team = user.team().first(&db).await?;

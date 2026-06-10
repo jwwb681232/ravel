@@ -462,11 +462,11 @@ impl<T> Collection<T> {
     }
 
     pub fn filter(self, f: impl FnMut(&T) -> bool) -> Self {
-        Self { items: self.items.into_iter().filter(f).collect() }
+        Self { items: self.items.into_iter().where_eq(f).collect() }
     }
 
     pub fn reject(self, f: impl FnMut(&T) -> bool) -> Self {
-        Self { items: self.items.into_iter().filter(|x| !f(x)).collect() }
+        Self { items: self.items.into_iter().where_eq(|x| !f(x)).collect() }
     }
 
     pub fn first(&self) -> Option<&T> { self.items.first() }
@@ -1991,7 +1991,7 @@ fn test_collection_map_filter_sort() {
 
     let result = collect!(vec!["carol", "alice", "bob"])
         .map(|s| s.to_uppercase())
-        .filter(|s| !s.is_empty())
+        .where_eq(|s| !s.is_empty())
         .sort()
         .to_vec();
 

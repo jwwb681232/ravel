@@ -72,15 +72,18 @@ pub enum ColumnType {
 pub enum RelationKind {
     HasOne {
         entity_type: Type,
+        table: Option<String>,
     },
     HasMany {
         entity_type: Type,
         via: Option<String>,
+        table: Option<String>,
     },
     BelongsTo {
         entity_type: Type,
         from: String,
         to: String,
+        table: Option<String>,
     },
 }
 
@@ -152,8 +155,12 @@ pub fn detect_relation(ty: &Type) -> Option<RelationKind> {
         "HasMany" => Some(RelationKind::HasMany {
             entity_type,
             via: None,
+            table: None,
         }),
-        "HasOne" => Some(RelationKind::HasOne { entity_type }),
+        "HasOne" => Some(RelationKind::HasOne {
+            entity_type,
+            table: None,
+        }),
         _ => None,
     }
 }
@@ -260,13 +267,14 @@ fn apply_meta(
                     *relation = Some(RelationKind::HasMany {
                         entity_type,
                         via: None,
+                        table: None,
                     });
                 }
             } else if path.is_ident("has_one") {
                 if !matches!(relation, Some(RelationKind::HasOne { .. })) {
                     let entity_type = extract_first_generic_arg(field_type)
                         .unwrap_or_else(|| syn::parse_quote! { () });
-                    *relation = Some(RelationKind::HasOne { entity_type });
+                    *relation = Some(RelationKind::HasOne { entity_type, table: None });
                 }
             } else if path.is_ident("belongs_to") {
                 let entity_type = extract_first_generic_arg(field_type)
@@ -277,6 +285,7 @@ fn apply_meta(
                     entity_type,
                     from,
                     to,
+                    table: None,
                 });
             }
         }
@@ -303,6 +312,18 @@ fn apply_meta(
                     && let Some(RelationKind::HasMany { via, .. }) = relation
                 {
                     *via = Some(s.value());
+                }
+            } else if nv.path.is_ident("table") {
+                if let syn::Expr::Lit(expr_lit) = &nv.value
+                    && let syn::Lit::Str(s) = &expr_lit.lit
+                {
+                    let table_name = s.value();
+                    match relation {
+                        Some(RelationKind::HasMany { table, .. }) => *table = Some(table_name),
+                        Some(RelationKind::HasOne { table, .. }) => *table = Some(table_name),
+                        Some(RelationKind::BelongsTo { table, .. }) => *table = Some(table_name),
+                        _ => {}
+                    }
                 }
             } else if nv.path.is_ident("from") {
                 if let syn::Expr::Lit(expr_lit) = &nv.value
@@ -518,6 +539,7 @@ mod tests {
             Some(RelationKind::HasMany {
                 entity_type: _,
                 via,
+                table: _,
             }) => {
                 assert!(via.is_none(), "HasMany via should be None by default");
             }
@@ -531,6 +553,7 @@ mod tests {
                 entity_type: _,
                 from,
                 to,
+                table: _,
             }) => {
                 assert_eq!(from, "user_id");
                 assert_eq!(to, "id");

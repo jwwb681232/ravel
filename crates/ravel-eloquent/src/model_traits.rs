@@ -1,8 +1,10 @@
-use sea_orm::{ConnectionTrait, DatabaseConnection, Statement, Value};
+use sea_orm::{ConnectionTrait, DatabaseConnection, ExprTrait, Statement, Value};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use std::collections::HashMap;
 
 use crate::error::{RavelEloquentError, Result};
+use crate::relations::{RelationKind, RelationMeta};
 
 /// Model metadata — auto-implemented by #[derive(Model)]
 pub trait ModelMeta {
@@ -23,6 +25,21 @@ pub trait ModelMeta {
 
     /// Non-hidden column names (for API serialization)
     fn public_columns() -> &'static [&'static str];
+
+    /// Relationship metadata. Empty by default — overridden by #[derive(Model)].
+    fn relations() -> &'static [RelationMeta] {
+        &[]
+    }
+
+    /// Look up a relationship by its field name.
+    fn get_relation(name: &str) -> Option<&'static RelationMeta> {
+        for rel in Self::relations() {
+            if rel.field_name == name {
+                return Some(rel);
+            }
+        }
+        None
+    }
 }
 
 // ── ModelExt ─────────────────────────────────────────────────────────────
@@ -79,6 +96,144 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
             .collect()
     }
 
+    /// Fetch all records with eager-loaded relations.
+    async fn all_with(db: &DatabaseConnection, relations: &[&str]) -> Result<Vec<Self>> {
+        let mut items = Self::all(db).await?;
+        for rel in relations {
+            Self::load_relation(rel, &mut items, db).await?;
+        }
+        Ok(items)
+    }
+
+    /// Eager-load a single relation onto already-fetched model instances.
+    async fn load_relation(
+        rel: &str,
+        items: &mut Vec<Self>,
+        db: &DatabaseConnection,
+    ) -> Result<()> {
+        let meta = Self::get_relation(rel).ok_or_else(|| {
+            RavelEloquentError::Other(format!(
+                "Relation '{}' not found on {}",
+                rel,
+                Self::table_name()
+            ).into())
+        })?;
+
+        let columns = (meta.get_columns)();
+
+        // Collect local-key values from the parent models.
+        let ids: Vec<String> = items
+            .iter()
+            .map(|item| {
+                let json = serde_json::to_value(item).unwrap();
+                let id_val = json.get(meta.local_key).unwrap();
+                match id_val {
+                    serde_json::Value::Number(n) => n.to_string(),
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Bool(b) => b.to_string(),
+                    _ => id_val.to_string(),
+                }
+            })
+            .collect();
+
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        // Build a parameterised IN (...) query via sea-query.
+        let values: Vec<sea_orm::Value> = ids
+            .iter()
+            .map(|id| {
+                id.parse::<i64>()
+                    .map(|i| sea_orm::Value::BigInt(Some(i)))
+                    .unwrap_or_else(|_| sea_orm::Value::String(Some(id.clone())))
+            })
+            .collect();
+
+        let sea_values: Vec<sea_orm::sea_query::Value> =
+            values.into_iter().map(|v| v.into()).collect();
+
+        let mut select = sea_orm::sea_query::Query::select();
+        select.from(sea_orm::sea_query::Alias::new(meta.table_name));
+        // Explicitly select all columns so the generated SQL has "SELECT *".
+        for col in columns {
+            select.column(sea_orm::sea_query::Alias::new(*col));
+        }
+        select.and_where(
+            sea_orm::sea_query::Expr::col(sea_orm::sea_query::Alias::new(meta.foreign_key))
+                .is_in(sea_values),
+        );
+
+        let sql = match db.get_database_backend() {
+            sea_orm::DbBackend::MySql => {
+                select.to_string(sea_orm::sea_query::MysqlQueryBuilder)
+            }
+            sea_orm::DbBackend::Postgres => {
+                select.to_string(sea_orm::sea_query::PostgresQueryBuilder)
+            }
+            sea_orm::DbBackend::Sqlite => {
+                select.to_string(sea_orm::sea_query::SqliteQueryBuilder)
+            }
+            _ => select.to_string(sea_orm::sea_query::SqliteQueryBuilder),
+        };
+
+        #[cfg(test)]
+        eprintln!("[ravel-eloquent] eager-load SQL: {}", sql);
+
+        let stmt = sea_orm::Statement::from_string(db.get_database_backend(), sql);
+        let rows = db
+            .query_all_raw(stmt)
+            .await
+            .map_err(RavelEloquentError::Database)?;
+
+        // Group related rows by their foreign key.
+        let mut grouped: HashMap<String, Vec<serde_json::Map<String, serde_json::Value>>> =
+            HashMap::new();
+        for row in rows {
+            let mut map = serde_json::Map::new();
+            for (i, col_name) in columns.iter().enumerate() {
+                let val = crate::query::try_extract(&row, i);
+                map.insert(col_name.to_string(), val);
+            }
+            let fk = match map.get(meta.foreign_key).unwrap() {
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::String(s) => s.clone(),
+                _ => map.get(meta.foreign_key).unwrap().to_string(),
+            };
+            grouped.entry(fk).or_default().push(map);
+        }
+
+        // Inject grouped data back into the parent JSON values.
+        let mut json_values: Vec<serde_json::Value> =
+            items.iter().map(|i| serde_json::to_value(i).unwrap()).collect();
+        for val in &mut json_values {
+            let id = match val.get(meta.local_key).unwrap() {
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::String(s) => s.clone(),
+                _ => val.get(meta.local_key).unwrap().to_string(),
+            };
+            if let Some(rel_items) = grouped.get(&id) {
+                match meta.kind {
+                    RelationKind::HasMany => {
+                        val[rel] = serde_json::to_value(rel_items).unwrap();
+                    }
+                    RelationKind::HasOne | RelationKind::BelongsTo => {
+                        val[rel] = serde_json::to_value(&rel_items.first()).unwrap();
+                    }
+                }
+            }
+        }
+
+        // Re-deserialise into the parent model.
+        let new_items: Vec<Self> = json_values
+            .iter()
+            .map(|v| serde_json::from_value(v.clone()).unwrap())
+            .collect();
+        *items = new_items;
+
+        Ok(())
+    }
+
     /// Create a new record from JSON data and return it.
     async fn create(data: serde_json::Value, db: &DatabaseConnection) -> Result<Self> {
         let cols: Vec<String> = Self::columns()
@@ -116,20 +271,23 @@ pub trait ModelExt: ModelMeta + DeserializeOwned + Serialize + Send + Sync + 'st
         )
     }
 
-    /// Delete a record by its primary key.
-    async fn delete_by_id(db: &DatabaseConnection, id: impl Into<Value> + Send) -> Result<()> {
-        let id_val: Value = id.into();
-        let quoted = crate::query::quote_value(&id_val);
+    /// Delete records by their primary key(s). Accepts a single id, a Vec, or an array.
+    async fn destroy(db: &DatabaseConnection, ids: impl IntoIterator<Item = impl Into<Value>> + Send) -> Result<u64> {
+        let quoted: Vec<String> = ids.into_iter().map(|id| crate::query::quote_value(&id.into())).collect();
+        if quoted.is_empty() {
+            return Ok(0);
+        }
         let sql = format!(
-            "DELETE FROM \"{}\" WHERE \"{}\" = {}",
+            "DELETE FROM \"{}\" WHERE \"{}\" IN ({})",
             Self::table_name(),
             Self::id_column(),
-            quoted,
+            quoted.join(", "),
         );
-        db.execute_unprepared(&sql)
+        let result = db
+            .execute_unprepared(&sql)
             .await
             .map_err(RavelEloquentError::Database)?;
-        Ok(())
+        Ok(result.rows_affected())
     }
 }
 

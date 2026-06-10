@@ -172,7 +172,7 @@ impl Post {
 - `UserColumn` / `PostColumn` enums (PascalCase variants, `as_str()`)
 - `UserPublic` / `PostPublic` structs (hidden fields excluded)
 - `ModelMeta`, `ModelExt`, `ActiveModelExt`, `Fillable`, `Serializes`, `Replicates` trait impls
-- `query()`, `r#where()`, `find()`, `find_or_fail()`, `all()`, `create()`, `delete_by_id()`
+- `query()`, `where_str()`, `find()`, `find_or_fail()`, `all()`, `create()`, `destroy()`
 - `save()`, `insert()`, `update()`, `delete()`, `refresh()`, `replicate()`, `touch()`
 - `set_name()`, `set_email()`, … per-field chainable setters
 - `to_public()`, `to_json()`, `to_public_json()`, `fill()`
@@ -258,7 +258,7 @@ pub async fn login(
 ) -> Result<impl IntoResponse, RavelError> {
     // Eloquent: query by email, get first match
     let user: Option<User> = User::query()
-        .r#where("email", &req.email)
+        .where_str("email", &req.email)
         .first(db())
         .await
         .map_err(|e| RavelError::internal(e.to_string()))?;
@@ -436,7 +436,7 @@ pub async fn destroy(Path(id): Path<i32>) -> Result<impl IntoResponse, RavelErro
 }
 
 // Alternative — delete without loading the instance first:
-// Post::delete_by_id(db(), id).await?;
+// Post::destroy(db(), id).await?;
 ```
 
 ---
@@ -484,7 +484,7 @@ let user = User::find_or_fail(db(), 1).await?;
 
 // user.posts() returns RelationQuery<Post> — supports filter, order, limit, paginate
 let posts = user.posts()
-    .filter(PostColumn::UserId, user.id)
+    .where_eq(PostColumn::UserId, user.id)
     .order_by_desc(PostColumn::CreatedAt)
     .limit(10)
     .get(db())
@@ -631,11 +631,11 @@ async fn main() -> anyhow::Result<()> {
 |---------|--------|
 | Model | `#[derive(Model)]`, `#[model(table = "...", timestamps)]` |
 | Static find | `User::find(db, id)`, `User::find_or_fail(db, id)` |
-| Query | `User::query().filter(col, val).order_by_desc(col).limit(10).get(db)` |
+| Query | `User::query().where_eq(col, val).order_by_desc(col).limit(10).get(db)` |
 | Create | `User::create(serde_json::json!({...}), db)` |
 | Save | `user.set_name("Bob").save(db)` (id==0 INSERT, else UPDATE) |
-| Delete | `user.delete(db)` (consumptive), `Post::delete_by_id(db, id)` (static) |
-| Relations | `user.posts().filter(...).order_by_desc(...).get(db)` |
+| Delete | `user.delete(db)` (consumptive), `Post::destroy(db, id)` (static) |
+| Relations | `user.posts().where_eq(...).order_by_desc(...).get(db)` |
 | Public JSON | `post.to_public()` / `post.to_public_json()` (hidden fields excluded) |
 | Routing | `Route::get/post/put/delete()`, `Route::group()` |
 | Validation | `FormRequest` trait, `Validated<T>`, `Rule::Required/Email/Min` |

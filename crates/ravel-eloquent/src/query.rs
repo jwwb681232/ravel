@@ -11,6 +11,7 @@ use sea_orm::{ColumnTrait, DatabaseConnection, Order, Statement, Value};
 use serde::de::DeserializeOwned;
 
 use crate::error::{RavelEloquentError, Result};
+use crate::model_traits::ModelExt;
 
 // ── QueryBuilder ───────────────────────────────────────────────────────
 
@@ -25,13 +26,14 @@ use crate::error::{RavelEloquentError, Result};
 /// use ravel_eloquent::QueryBuilder;
 ///
 /// let users: Vec<User> = QueryBuilder::new("users", &["id", "name", "email"])
-///     .filter(UserColumn::Name, "Alice")
+///     .where_eq(UserColumn::Name, "Alice")
 ///     .order_by_asc(UserColumn::Id)
 ///     .get(&db).await?;
 /// ```
 pub struct QueryBuilder {
     select: SelectStatement,
     columns: Vec<&'static str>,
+    eager_loads: Vec<String>,
 }
 
 impl QueryBuilder {
@@ -47,12 +49,19 @@ impl QueryBuilder {
         Self {
             select,
             columns: columns.to_vec(),
+            eager_loads: Vec::new(),
         }
     }
 
     /// Escape hatch: consume self and return the underlying `SelectStatement`.
     pub fn into_select(self) -> SelectStatement {
         self.select
+    }
+
+    /// Eager-load a relation after the main query is executed.
+    pub fn with(mut self, relation: &str) -> Self {
+        self.eager_loads.push(relation.to_string());
+        self
     }
 
     async fn run<T: DeserializeOwned>(self, db: &DatabaseConnection) -> Result<Vec<T>> {
@@ -85,68 +94,68 @@ impl QueryBuilder {
 
 impl QueryBuilder {
     /// WHERE col = val
-    pub fn filter(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
+    pub fn where_eq(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
         self.select.and_where(col.eq(val.into()));
         self
     }
 
     /// WHERE col > val
-    pub fn filter_gt(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
+    pub fn where_gt(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
         self.select.and_where(col.gt(val.into()));
         self
     }
 
     /// WHERE col >= val
-    pub fn filter_gte(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
+    pub fn where_gte(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
         self.select.and_where(col.gte(val.into()));
         self
     }
 
     /// WHERE col < val
-    pub fn filter_lt(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
+    pub fn where_lt(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
         self.select.and_where(col.lt(val.into()));
         self
     }
 
     /// WHERE col <= val
-    pub fn filter_lte(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
+    pub fn where_lte(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
         self.select.and_where(col.lte(val.into()));
         self
     }
 
     /// WHERE col != val
-    pub fn filter_ne(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
+    pub fn where_ne(mut self, col: impl ColumnTrait, val: impl Into<Value>) -> Self {
         self.select.and_where(col.ne(val.into()));
         self
     }
 
     /// WHERE col LIKE val
-    pub fn filter_like(mut self, col: impl ColumnTrait, val: &str) -> Self {
+    pub fn where_like(mut self, col: impl ColumnTrait, val: &str) -> Self {
         self.select.and_where(col.like(val));
         self
     }
 
     /// WHERE col IN (vals...)
-    pub fn filter_in(mut self, col: impl ColumnTrait, vals: Vec<impl Into<Value>>) -> Self {
+    pub fn where_in(mut self, col: impl ColumnTrait, vals: Vec<impl Into<Value>>) -> Self {
         let values: Vec<Value> = vals.into_iter().map(|v| v.into()).collect();
         self.select.and_where(col.is_in(values));
         self
     }
 
     /// WHERE col IS NULL
-    pub fn filter_null(mut self, col: impl ColumnTrait) -> Self {
+    pub fn where_null(mut self, col: impl ColumnTrait) -> Self {
         self.select.and_where(col.is_null());
         self
     }
 
     /// WHERE col IS NOT NULL
-    pub fn filter_not_null(mut self, col: impl ColumnTrait) -> Self {
+    pub fn where_not_null(mut self, col: impl ColumnTrait) -> Self {
         self.select.and_where(col.is_not_null());
         self
     }
 
     /// WHERE col BETWEEN low AND high
-    pub fn filter_between(
+    pub fn where_between(
         mut self,
         col: impl ColumnTrait,
         low: impl Into<Value>,
@@ -162,9 +171,9 @@ impl QueryBuilder {
 impl QueryBuilder {
     /// Filter by column name (string) — convenience for macro-generated code.
     ///
-    /// Prefer the type-safe [`filter`](Self::filter) methods that accept the
+    /// Prefer the type-safe [`where_eq`](Self::where_eq) methods that accept the
     /// Column enum directly.
-    pub fn r#where(mut self, col: &str, val: impl Into<Value>) -> Self {
+    pub fn where_str(mut self, col: &str, val: impl Into<Value>) -> Self {
         use sea_orm::sea_query::{BinOper, ColumnRef, DynIden, SimpleExpr};
 
         let val_expr: SimpleExpr = val.into().into();
@@ -224,16 +233,79 @@ impl QueryBuilder {
     }
 }
 
+// ── Aggregates ─────────────────────────────────────────────────────────
+
+impl QueryBuilder {
+    /// SELECT SUM(col) — Column enum or `&str`.
+    pub async fn sum(self, col: impl ColumnTrait, db: &DatabaseConnection) -> Result<f64> {
+        self.aggregate(col, "SUM", db).await
+    }
+
+    /// SELECT AVG(col) — Column enum or `&str`.
+    pub async fn avg(self, col: impl ColumnTrait, db: &DatabaseConnection) -> Result<f64> {
+        self.aggregate(col, "AVG", db).await
+    }
+
+    /// SELECT MIN(col) — Column enum or `&str`.
+    pub async fn min(self, col: impl ColumnTrait, db: &DatabaseConnection) -> Result<f64> {
+        self.aggregate(col, "MIN", db).await
+    }
+
+    /// SELECT MAX(col) — Column enum or `&str`.
+    pub async fn max(self, col: impl ColumnTrait, db: &DatabaseConnection) -> Result<f64> {
+        self.aggregate(col, "MAX", db).await
+    }
+
+    async fn aggregate(
+        self,
+        col: impl ColumnTrait,
+        func: &str,
+        db: &DatabaseConnection,
+    ) -> Result<f64> {
+        let (_, col_name) = col.as_column_ref();
+        let col_str = col_name.to_string();
+        let backend = db.get_database_backend();
+        let inner = Self::build_sql(&self.select, backend);
+        let sql = format!("SELECT {}(\"{}\") FROM ({}) AS sub", func, col_str, inner);
+        let stmt = Statement::from_string(backend, sql);
+        let rows = db
+            .query_all_raw(stmt)
+            .await
+            .map_err(RavelEloquentError::Database)?;
+        Ok(rows
+            .first()
+            .and_then(|r| {
+                r.try_get_by_index::<f64>(0)
+                    .or_else(|_| r.try_get_by_index::<i64>(0).map(|v| v as f64))
+                    .ok()
+            })
+            .unwrap_or(0.0))
+    }
+
+    /// GROUP BY col — Column enum or `&str`.
+    pub fn group_by(mut self, col: impl ColumnTrait) -> Self {
+        let (_, col_name) = col.as_column_ref();
+        let col_ref: sea_query::ColumnRef = sea_query::DynIden::from(col_name.to_string()).into();
+        self.select.add_group_by([Expr::col(col_ref)]);
+        self
+    }
+}
+
 // ── Execution ──────────────────────────────────────────────────────────
 
 impl QueryBuilder {
     /// Execute the query and return all matching rows.
-    pub async fn get<T: DeserializeOwned>(self, db: &DatabaseConnection) -> Result<Vec<T>> {
-        self.run(db).await
+    pub async fn get<T: ModelExt>(self, db: &DatabaseConnection) -> Result<Vec<T>> {
+        let eager = self.eager_loads.clone();
+        let mut items = self.run(db).await?;
+        for rel in &eager {
+            T::load_relation(rel, &mut items, db).await?;
+        }
+        Ok(items)
     }
 
     /// Execute the query and return the first matching row, if any.
-    pub async fn first<T: DeserializeOwned>(
+    pub async fn first<T: ModelExt>(
         mut self,
         db: &DatabaseConnection,
     ) -> Result<Option<T>> {
@@ -267,7 +339,7 @@ impl QueryBuilder {
     }
 
     /// Paginate results.
-    pub async fn paginate<T: DeserializeOwned>(
+    pub async fn paginate<T: ModelExt>(
         self,
         db: &DatabaseConnection,
         page: u64,
@@ -325,7 +397,7 @@ pub(crate) fn row_to_model<T: DeserializeOwned>(
     Ok(serde_json::from_value(serde_json::Value::Object(map))?)
 }
 
-fn try_extract(row: &sea_orm::QueryResult, index: usize) -> serde_json::Value {
+pub fn try_extract(row: &sea_orm::QueryResult, index: usize) -> serde_json::Value {
     if let Ok(v) = row.try_get_by_index::<String>(index) {
         serde_json::Value::String(v)
     } else if let Ok(v) = row.try_get_by_index::<i64>(index) {

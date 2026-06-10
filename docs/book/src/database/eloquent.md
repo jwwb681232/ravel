@@ -118,7 +118,7 @@ A `#[derive(Debug, Clone, serde::Serialize)]` struct with all **non-hidden**, **
 | Trait | Provides |
 |-------|----------|
 | `ModelMeta` | `table_name()`, `columns()`, `id_column()`, `public_columns()` |
-| `ModelExt` | `find()`, `find_or_fail()`, `all()`, `create()`, `delete_by_id()` |
+| `ModelExt` | `find()`, `find_or_fail()`, `all()`, `create()`, `destroy()` |
 | `ActiveModelExt` | `save()`, `insert()`, `update()`, `delete()`, `refresh()` |
 | `Fillable` | `fill()`, `set_<field>()` per-field setters |
 | `Serializes` | `to_public()`, `to_json()`, `to_public_json()` |
@@ -154,7 +154,7 @@ let user = User::create(
 ).await?;
 
 // Delete by ID (no need to load the instance)
-User::delete_by_id(&db, 42).await?;
+User::destroy(&db, 42).await?;
 ```
 
 ---
@@ -242,7 +242,7 @@ let public = user.to_public();
 use ravel_eloquent::Model;
 
 let qb = User::query();                        // SELECT * FROM "users"
-let qb = User::query().r#where("active", true); // with WHERE
+let qb = User::query().where_str("active", true); // with WHERE
 ```
 
 ### WHERE Clauses
@@ -251,16 +251,16 @@ let qb = User::query().r#where("active", true); // with WHERE
 use ravel_eloquent::UserColumn;
 
 User::query()
-    .filter(UserColumn::Name, "Alice")          // = 'Alice'
-    .filter_gt(UserColumn::Age, 18)             // > 18
-    .filter_gte(UserColumn::Age, 18)            // >= 18
-    .filter_lt(UserColumn::Age, 65)             // < 65
-    .filter_ne(UserColumn::Status, "deleted")   // != 'deleted'
-    .filter_like(UserColumn::Name, "%Ali%")     // LIKE
-    .filter_in(UserColumn::Id, &[1, 2, 3])      // IN (1,2,3)
-    .filter_null(UserColumn::DeletedAt)         // IS NULL
-    .filter_not_null(UserColumn::Email)         // IS NOT NULL
-    .filter_between(UserColumn::Age, 18, 65)    // BETWEEN 18 AND 65
+    .where_eq(UserColumn::Name, "Alice")          // = 'Alice'
+    .where_gt(UserColumn::Age, 18)             // > 18
+    .where_gte(UserColumn::Age, 18)            // >= 18
+    .where_lt(UserColumn::Age, 65)             // < 65
+    .where_ne(UserColumn::Status, "deleted")   // != 'deleted'
+    .where_like(UserColumn::Name, "%Ali%")     // LIKE
+    .where_in(UserColumn::Id, &[1, 2, 3])      // IN (1,2,3)
+    .where_null(UserColumn::DeletedAt)         // IS NULL
+    .where_not_null(UserColumn::Email)         // IS NOT NULL
+    .where_between(UserColumn::Age, 18, 65)    // BETWEEN 18 AND 65
     .get(&db).await?;
 ```
 
@@ -268,8 +268,8 @@ For string-based column names (dynamic queries, macro-generated code):
 
 ```rust
 User::query()
-    .r#where("name", "Alice")
-    .r#where("age", 18)
+    .where_str("name", "Alice")
+    .where_str("age", 18)
     .get(&db).await?;
 ```
 
@@ -343,7 +343,7 @@ let user = User::find(&db, 1).await?;
 
 // user.posts() returns RelationQuery<Post>
 let posts = user.posts()
-    .filter(PostColumn::Published, true)
+    .where_eq(PostColumn::Published, true)
     .order_by_desc(PostColumn::CreatedAt)
     .limit(10)
     .get(&db).await?;
@@ -354,7 +354,7 @@ let team = user.team()
 
 // Aggregates on relations
 let draft_count = user.posts()
-    .filter(PostColumn::Published, false)
+    .where_eq(PostColumn::Published, false)
     .count(&db).await?;
 
 let has_posts = user.posts().exists(&db).await?;
@@ -364,11 +364,11 @@ let has_posts = user.posts().exists(&db).await?;
 
 | Method | Description |
 |--------|-------------|
-| `.filter(col, val)` | WHERE equality |
-| `.filter_gt(col, val)` | WHERE greater-than |
-| `.filter_in(col, vals)` | WHERE IN |
-| `.filter_null(col)` | WHERE IS NULL |
-| `.filter_not_null(col)` | WHERE IS NOT NULL |
+| `.where_eq(col, val)` | WHERE equality |
+| `.where_gt(col, val)` | WHERE greater-than |
+| `.where_in(col, vals)` | WHERE IN |
+| `.where_null(col)` | WHERE IS NULL |
+| `.where_not_null(col)` | WHERE IS NOT NULL |
 | `.order_by_asc(col)` / `.order_by_desc(col)` | ORDER BY |
 | `.limit(n)` / `.offset(n)` | Pagination |
 | `.get(db)` | Fetch all matching |
@@ -399,7 +399,7 @@ where
 | Trait | Key methods | Kind |
 |-------|-------------|------|
 | `ModelMeta` | `table_name()`, `columns()`, `id_column()`, `public_columns()` | Metadata |
-| `ModelExt` | `find()`, `find_or_fail()`, `all()`, `create()`, `delete_by_id()` | Static CRUD |
+| `ModelExt` | `find()`, `find_or_fail()`, `all()`, `create()`, `destroy()` | Static CRUD |
 | `ActiveModelExt` | `save()`, `insert()`, `update()`, `delete()`, `refresh()` | Instance writes |
 | `Fillable` | `fill()`, `set_<field>()` | Mass assignment |
 | `Serializes` | `to_public()`, `to_json()`, `to_public_json()` | JSON |

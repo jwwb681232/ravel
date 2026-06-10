@@ -825,7 +825,7 @@ fn generate_sea_orm_relation_field(f: &FieldAttr, field_name: syn::Ident) -> Tok
 
 fn generate_column_enum(model: &ModelAttr, enum_name: syn::Ident) -> TokenStream {
     let variants: Vec<proc_macro2::TokenStream> = model.fields.iter()
-        .filter(|f| f.relation.is_none())
+        .where_eq(|f| f.relation.is_none())
         .map(|f| {
             let variant = syn::Ident::new(
                 &to_pascal_case(&f.field_name),
@@ -836,7 +836,7 @@ fn generate_column_enum(model: &ModelAttr, enum_name: syn::Ident) -> TokenStream
         .collect();
 
     let as_str_arms: Vec<proc_macro2::TokenStream> = model.fields.iter()
-        .filter(|f| f.relation.is_none())
+        .where_eq(|f| f.relation.is_none())
         .map(|f| {
             let variant = syn::Ident::new(
                 &to_pascal_case(&f.field_name),
@@ -873,7 +873,7 @@ fn generate_public_struct(
     public_name: syn::Ident,
 ) -> TokenStream {
     let public_fields: Vec<TokenStream> = model.fields.iter()
-        .filter(|f| !f.is_hidden && f.relation.is_none())
+        .where_eq(|f| !f.is_hidden && f.relation.is_none())
         .map(|f| {
             let name = format_ident!("{}", f.field_name);
             let ty = &f.field_type;
@@ -913,7 +913,7 @@ fn generate_model_meta(
     let table_name = &model.table_name;
 
     let column_names: Vec<&String> = model.fields.iter()
-        .filter(|f| f.relation.is_none())
+        .where_eq(|f| f.relation.is_none())
         .map(|f| f.column_name.as_ref().unwrap_or(&f.field_name))
         .collect();
 
@@ -924,7 +924,7 @@ fn generate_model_meta(
         .unwrap_or("id");
 
     let public_column_names: Vec<&String> = model.fields.iter()
-        .filter(|f| !f.is_hidden && f.relation.is_none())
+        .where_eq(|f| !f.is_hidden && f.relation.is_none())
         .map(|f| f.column_name.as_ref().unwrap_or(&f.field_name))
         .collect();
 
@@ -983,7 +983,7 @@ fn generate_to_public_body(model: &ModelAttr) -> TokenStream {
 
     // 实际生成时用正确的名字
     let field_mappings: Vec<TokenStream> = model.fields.iter()
-        .filter(|f| !f.is_hidden && f.relation.is_none())
+        .where_eq(|f| !f.is_hidden && f.relation.is_none())
         .map(|f| {
             let name = format_ident!("{}", f.field_name);
             quote! { #name: self.#name.clone() }
@@ -1011,11 +1011,11 @@ fn generate_query_methods(struct_name: &syn::Ident) -> TokenStream {
         }
 
         /// 创建带 WHERE 条件的查询构建器
-        pub fn r#where(
+        pub fn where_eq(
             col: &str,
             val: impl Into<sea_orm::Value>,
         ) -> ravel_eloquent::QueryBuilder<Self> {
-            Self::query().r#where(col, val)
+            Self::query().where_eq(col, val)
         }
     }
 }
@@ -1073,7 +1073,7 @@ fn generate_static_crud(struct_name: &syn::Ident) -> TokenStream {
 
 fn generate_setters(model: &ModelAttr) -> TokenStream {
     let setters: Vec<TokenStream> = model.fields.iter()
-        .filter(|f| !f.is_hidden && f.relation.is_none())
+        .where_eq(|f| !f.is_hidden && f.relation.is_none())
         .map(|f| {
             let field_name = format_ident!("{}", f.field_name);
             let setter_name = format_ident!("set_{}", f.field_name);
@@ -1289,7 +1289,7 @@ pub trait ModelExt: ModelMeta + sea_orm::EntityTrait + Send + Sync + Sized + 'st
         let id_value: Value = id.into();
         let id_col = <Self::Columns as sea_orm::ColumnTrait>::from_str(Self::id_column())?;
         let result = Self::find()
-            .filter(id_col.eq(id_value))
+            .where_eq(id_col.eq(id_value))
             .one(db)
             .await
             .map_err(|e| crate::error::RavelEloquentError::Database(e))?;
@@ -1333,7 +1333,7 @@ pub trait ModelExt: ModelMeta + sea_orm::EntityTrait + Send + Sync + Sized + 'st
         let id_value: Value = id.into();
         let id_col = <Self::Columns as sea_orm::ColumnTrait>::from_str(Self::id_column())?;
         let result = sea_orm::EntityTrait::delete_many()
-            .filter(id_col.eq(id_value))
+            .where_eq(id_col.eq(id_value))
             .exec(db)
             .await
             .map_err(|e| crate::error::RavelEloquentError::Database(e))?;
@@ -1506,95 +1506,95 @@ where
     E::Columns: sea_orm::ColumnTrait + std::str::FromStr<Err = crate::error::RavelEloquentError>,
 {
     /// WHERE col = val
-    pub fn r#where(mut self, col: &str, val: impl Into<Value>) -> Self {
+    pub fn where_eq(mut self, col: &str, val: impl Into<Value>) -> Self {
         if let Ok(column) = E::Columns::from_str(col) {
-            self.select = self.select.filter(column.eq(val.into()));
+            self.select = self.select.where_eq(column.eq(val.into()));
         }
         self
     }
 
     /// WHERE col > val
-    pub fn r#where_gt(mut self, col: &str, val: impl Into<Value>) -> Self {
+    pub fn where_eq_gt(mut self, col: &str, val: impl Into<Value>) -> Self {
         if let Ok(column) = E::Columns::from_str(col) {
-            self.select = self.select.filter(column.gt(val.into()));
+            self.select = self.select.where_eq(column.gt(val.into()));
         }
         self
     }
 
     /// WHERE col >= val
-    pub fn r#where_gte(mut self, col: &str, val: impl Into<Value>) -> Self {
+    pub fn where_eq_gte(mut self, col: &str, val: impl Into<Value>) -> Self {
         if let Ok(column) = E::Columns::from_str(col) {
-            self.select = self.select.filter(column.gte(val.into()));
+            self.select = self.select.where_eq(column.gte(val.into()));
         }
         self
     }
 
     /// WHERE col < val
-    pub fn r#where_lt(mut self, col: &str, val: impl Into<Value>) -> Self {
+    pub fn where_eq_lt(mut self, col: &str, val: impl Into<Value>) -> Self {
         if let Ok(column) = E::Columns::from_str(col) {
-            self.select = self.select.filter(column.lt(val.into()));
+            self.select = self.select.where_eq(column.lt(val.into()));
         }
         self
     }
 
     /// WHERE col <= val
-    pub fn r#where_lte(mut self, col: &str, val: impl Into<Value>) -> Self {
+    pub fn where_eq_lte(mut self, col: &str, val: impl Into<Value>) -> Self {
         if let Ok(column) = E::Columns::from_str(col) {
-            self.select = self.select.filter(column.lte(val.into()));
+            self.select = self.select.where_eq(column.lte(val.into()));
         }
         self
     }
 
     /// WHERE col != val
-    pub fn r#where_ne(mut self, col: &str, val: impl Into<Value>) -> Self {
+    pub fn where_eq_ne(mut self, col: &str, val: impl Into<Value>) -> Self {
         if let Ok(column) = E::Columns::from_str(col) {
-            self.select = self.select.filter(column.ne(val.into()));
+            self.select = self.select.where_eq(column.ne(val.into()));
         }
         self
     }
 
     /// WHERE col LIKE val
-    pub fn r#where_like(mut self, col: &str, val: &str) -> Self {
+    pub fn where_eq_like(mut self, col: &str, val: &str) -> Self {
         if let Ok(column) = E::Columns::from_str(col) {
-            self.select = self.select.filter(column.like(val));
+            self.select = self.select.where_eq(column.like(val));
         }
         self
     }
 
     /// WHERE col IN (...)
-    pub fn r#where_in(mut self, col: &str, vals: Vec<impl Into<Value>>) -> Self {
+    pub fn where_eq_in(mut self, col: &str, vals: Vec<impl Into<Value>>) -> Self {
         if let Ok(column) = E::Columns::from_str(col) {
             let values: Vec<Value> = vals.into_iter().map(|v| v.into()).collect();
-            self.select = self.select.filter(column.is_in(values));
+            self.select = self.select.where_eq(column.is_in(values));
         }
         self
     }
 
     /// WHERE col IS NULL
-    pub fn r#where_null(mut self, col: &str) -> Self {
+    pub fn where_eq_null(mut self, col: &str) -> Self {
         if let Ok(column) = E::Columns::from_str(col) {
-            self.select = self.select.filter(column.is_null());
+            self.select = self.select.where_eq(column.is_null());
         }
         self
     }
 
     /// WHERE col IS NOT NULL
-    pub fn r#where_not_null(mut self, col: &str) -> Self {
+    pub fn where_eq_not_null(mut self, col: &str) -> Self {
         if let Ok(column) = E::Columns::from_str(col) {
-            self.select = self.select.filter(column.is_not_null());
+            self.select = self.select.where_eq(column.is_not_null());
         }
         self
     }
 
     /// WHERE col BETWEEN low AND high
-    pub fn r#where_between(
+    pub fn where_eq_between(
         mut self,
         col: &str,
         low: impl Into<Value>,
         high: impl Into<Value>,
     ) -> Self {
         if let Ok(column) = E::Columns::from_str(col) {
-            self.select = self.select.filter(column.between(low.into(), high.into()));
+            self.select = self.select.where_eq(column.between(low.into(), high.into()));
         }
         self
     }
@@ -1811,45 +1811,45 @@ where
 {
     // ---------- 过滤 ----------
 
-    pub fn r#where(mut self, col: &str, val: impl Into<Value>) -> Self {
+    pub fn where_eq(mut self, col: &str, val: impl Into<Value>) -> Self {
         if let Ok(column) = R::Columns::from_str(col) {
-            self.select = self.select.filter(column.eq(val.into()));
+            self.select = self.select.where_eq(column.eq(val.into()));
         }
         self
     }
 
-    pub fn r#where_gt(mut self, col: &str, val: impl Into<Value>) -> Self {
+    pub fn where_eq_gt(mut self, col: &str, val: impl Into<Value>) -> Self {
         if let Ok(column) = R::Columns::from_str(col) {
-            self.select = self.select.filter(column.gt(val.into()));
+            self.select = self.select.where_eq(column.gt(val.into()));
         }
         self
     }
 
-    pub fn r#where_in(mut self, col: &str, vals: Vec<impl Into<Value>>) -> Self {
+    pub fn where_eq_in(mut self, col: &str, vals: Vec<impl Into<Value>>) -> Self {
         if let Ok(column) = R::Columns::from_str(col) {
             let values: Vec<Value> = vals.into_iter().map(|v| v.into()).collect();
-            self.select = self.select.filter(column.is_in(values));
+            self.select = self.select.where_eq(column.is_in(values));
         }
         self
     }
 
-    pub fn r#where_null(mut self, col: &str) -> Self {
+    pub fn where_eq_null(mut self, col: &str) -> Self {
         if let Ok(column) = R::Columns::from_str(col) {
-            self.select = self.select.filter(column.is_null());
+            self.select = self.select.where_eq(column.is_null());
         }
         self
     }
 
-    pub fn r#where_not_null(mut self, col: &str) -> Self {
+    pub fn where_eq_not_null(mut self, col: &str) -> Self {
         if let Ok(column) = R::Columns::from_str(col) {
-            self.select = self.select.filter(column.is_not_null());
+            self.select = self.select.where_eq(column.is_not_null());
         }
         self
     }
 
     pub fn or_where(mut self, col: &str, val: impl Into<Value>) -> Self {
         if let Ok(column) = R::Columns::from_str(col) {
-            self.select = self.select.filter(column.eq(val.into()));
+            self.select = self.select.where_eq(column.eq(val.into()));
             // TODO: 实现 OR 条件需要条件树支持
         }
         self
@@ -1943,7 +1943,7 @@ pub trait HasRelationsExt: ModelMeta {
     {
         let select = R::find();
         let col = R::Columns::from_str(foreign_key).unwrap();
-        let select = select.filter(col.eq(local_value));
+        let select = select.where_eq(col.eq(local_value));
         RelationQuery::from_select(select)
     }
 }
@@ -2187,8 +2187,8 @@ fn test_replicate_resets_id() {
 fn test_query_builder_chainable() {
     // 验证链式调用可以编译
     let _query = User::query()
-        .r#where("name", "Alice")
-        .r#where_gt("id", 0)
+        .where_str("name", "Alice")
+        .where_str_gt("id", 0)
         .order_by("id", "DESC")
         .limit(10)
         .offset(0);
@@ -2390,7 +2390,7 @@ async fn test_query_where_conditions() {
     }
 
     let count = TestUser::query()
-        .r#where_gt("id", 2)
+        .where_str_gt("id", 2)
         .count(&db).await.unwrap();
     assert_eq!(count, 3);
 }
