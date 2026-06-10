@@ -51,12 +51,12 @@ impl MemorySchedulerDriver {
 #[async_trait]
 impl SchedulerDriver for MemorySchedulerDriver {
     async fn heartbeat(&self, task_id: &str, at: DateTime<Utc>) -> anyhow::Result<()> {
-        self.last_runs.lock().unwrap().insert(task_id.into(), at);
+        self.last_runs.lock().unwrap_or_else(|e| e.into_inner()).insert(task_id.into(), at);
         Ok(())
     }
 
     async fn last_run(&self, task_id: &str) -> anyhow::Result<Option<DateTime<Utc>>> {
-        Ok(self.last_runs.lock().unwrap().get(task_id).copied())
+        Ok(self.last_runs.lock().unwrap_or_else(|e| e.into_inner()).get(task_id).copied())
     }
 }
 
@@ -121,7 +121,7 @@ impl Scheduler {
     pub fn tick(&self) {
         let now = Utc::now();
         for task in &self.tasks {
-            let mut next_run = task.next_run.lock().unwrap();
+            let mut next_run = task.next_run.lock().unwrap_or_else(|e| e.into_inner());
             if now >= *next_run {
                 (task.callback)();
                 *next_run = now + task.interval;
@@ -219,7 +219,7 @@ mod tests {
 
         // Force the next_run time into the past so tick() executes them
         for task in &sched.tasks {
-            let mut nr = task.next_run.lock().unwrap();
+            let mut nr = task.next_run.lock().unwrap_or_else(|e| e.into_inner());
             *nr = Utc::now() - Duration::minutes(1);
         }
 

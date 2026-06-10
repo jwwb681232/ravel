@@ -185,7 +185,7 @@ mod tests {
     fn test_state_with_token() -> Arc<SessionState> {
         let state = test_state();
         {
-            let mut guard = state.data.lock().unwrap();
+            let mut guard = state.data.lock().unwrap_or_else(|e| e.into_inner());
             guard.values.insert(
                 CSRF_SESSION_KEY.into(),
                 serde_json::json!("test-csrf-token"),
@@ -200,7 +200,7 @@ mod tests {
         let token = Csrf::get_or_create_token(&state);
 
         // Token should be stored in session
-        let guard = state.data.lock().unwrap();
+        let guard = state.data.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(
             guard
                 .values
@@ -246,7 +246,7 @@ mod tests {
         let new_token = Csrf::rotate_token(&state);
 
         assert_ne!(new_token, "test-csrf-token");
-        let guard = state.data.lock().unwrap();
+        let guard = state.data.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(
             guard
                 .values

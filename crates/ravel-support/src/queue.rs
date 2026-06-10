@@ -153,12 +153,12 @@ impl MemoryDriver {
 #[async_trait]
 impl QueueDriver for MemoryDriver {
     async fn push(&self, job: JobPayload) -> Result<()> {
-        self.jobs.lock().unwrap().push_back(job);
+        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).push_back(job);
         Ok(())
     }
 
     async fn pop(&self, _queue: &str) -> Result<Option<JobPayload>> {
-        let mut jobs = self.jobs.lock().unwrap();
+        let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         // Find first ready job
         if let Some(pos) = jobs.iter().position(|j| j.is_ready()) {
             Ok(Some(jobs.remove(pos).unwrap()))
@@ -178,7 +178,7 @@ impl QueueDriver for MemoryDriver {
     }
 
     async fn size(&self, _queue: &str) -> Result<usize> {
-        Ok(self.jobs.lock().unwrap().len())
+        Ok(self.jobs.lock().unwrap_or_else(|e| e.into_inner()).len())
     }
 }
 
@@ -273,7 +273,7 @@ impl Queue {
 
     /// Register a job type.
     pub fn register<J: Job>(&self) {
-        self.registry.lock().unwrap().register::<J>();
+        self.registry.lock().unwrap_or_else(|e| e.into_inner()).register::<J>();
     }
 
     /// Dispatch a job.
@@ -319,18 +319,18 @@ impl Queue {
 
     /// Check if a job type is registered.
     pub fn is_registered<J: Job>(&self) -> bool {
-        self.registry.lock().unwrap().has(J::name())
+        self.registry.lock().unwrap_or_else(|e| e.into_inner()).has(J::name())
     }
 
     /// List failed jobs.
     pub fn failed(&self) -> Vec<FailedJob> {
-        self.failed_jobs.lock().unwrap().clone()
+        self.failed_jobs.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Re-dispatch a failed job by ID.
     pub async fn retry_failed(&self, id: &Uuid) -> Result<()> {
         let job = {
-            let mut failed = self.failed_jobs.lock().unwrap();
+            let mut failed = self.failed_jobs.lock().unwrap_or_else(|e| e.into_inner());
             let pos = failed.iter().position(|j| &j.id == id);
             match pos {
                 Some(p) => failed.remove(p),
@@ -359,7 +359,7 @@ impl Queue {
 
     async fn process_job(&self, job: JobPayload) {
         let handler = {
-            let registry = self.registry.lock().unwrap();
+            let registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
             match registry.get(&job.job_type) {
                 Some(h) => h.clone(),
                 None => {
@@ -385,7 +385,7 @@ impl Queue {
 
                 if job.attempts + 1 >= job.max_attempts {
                     // Exhausted retries — move to failed jobs
-                    self.failed_jobs.lock().unwrap().push(FailedJob {
+                    self.failed_jobs.lock().unwrap_or_else(|e| e.into_inner()).push(FailedJob {
                         id: job.id,
                         job_type: job.job_type.clone(),
                         payload: job.payload.clone(),

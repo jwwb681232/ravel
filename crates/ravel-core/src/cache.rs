@@ -69,7 +69,7 @@ impl MemoryCache {
 
 impl Cache for MemoryCache {
     fn put(&self, key: &str, value: Box<dyn Any + Send + Sync>, ttl: Option<Duration>) {
-        let mut store = self.store.lock().unwrap();
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         let expires_at = ttl.map(|d| Instant::now() + d);
         store.insert(key.to_string(), CacheEntry { value, expires_at });
     }
@@ -78,7 +78,7 @@ impl Cache for MemoryCache {
     where
         T: 'static + Clone + Send + Sync,
     {
-        let mut store = self.store.lock().unwrap();
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         Self::evict_expired(&mut store);
 
         store
@@ -87,17 +87,17 @@ impl Cache for MemoryCache {
     }
 
     fn has(&self, key: &str) -> bool {
-        let mut store = self.store.lock().unwrap();
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         Self::evict_expired(&mut store);
         store.contains_key(key)
     }
 
     fn forget(&self, key: &str) {
-        self.store.lock().unwrap().remove(key);
+        self.store.lock().unwrap_or_else(|e| e.into_inner()).remove(key);
     }
 
     fn flush(&self) {
-        self.store.lock().unwrap().clear();
+        self.store.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
 }
 

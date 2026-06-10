@@ -417,7 +417,7 @@ mod tests {
             session.put("shared_key", "shared_value");
         } // Drop here
 
-        let guard = state.data.lock().unwrap();
+        let guard = state.data.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(
             guard.values.get("shared_key").unwrap(),
             &serde_json::json!("shared_value")

@@ -130,7 +130,7 @@ impl RateLimiter {
     /// Check whether a request from `key` should be allowed.
     /// Returns `(allowed, remaining, reset_at)`.
     pub fn check(&self, key: &str) -> (bool, u64, Instant) {
-        let mut map = self.inner.lock().unwrap();
+        let mut map = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
 
         // Prune expired entries before checking (controls memory growth)
