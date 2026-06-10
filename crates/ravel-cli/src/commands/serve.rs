@@ -1,50 +1,60 @@
 //! ravel serve — start the development server.
 //!
-//! Checks project structure, reads the configured port from `config/app.toml`,
-//! warns if the port is already in use, then runs `cargo run`.
+//! Validates the project structure, reads the configured port
+//! from `config/app.toml`, warns if the port is in use,
+//! then runs `cargo run`.
 
 use anyhow::Result;
 use std::net::TcpListener;
 use std::path::Path;
 use std::process::Command;
 
-/// Read the server port from `config/app.toml` if it exists.
-fn read_port_from_config() -> Option<u16> {
+fn read_config() -> (u16, String) {
     let path = Path::new("config/app.toml");
     if !path.exists() {
-        return None;
+        return (3000, "127.0.0.1".into());
     }
-    let content = std::fs::read_to_string(path).ok()?;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("port = ") {
-            let val = trimmed.strip_prefix("port = ")?;
-            return val.parse().ok();
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return (3000, "127.0.0.1".into()),
+    };
+    // Parse server section; if anything fails, use defaults
+    match toml::from_str::<toml::Value>(&content) {
+        Ok(val) => {
+            let port = val.get("server")
+                .and_then(|s| s.get("port"))
+                .and_then(|p| p.as_integer())
+                .map(|p| p as u16)
+                .unwrap_or(3000);
+            let host = val.get("server")
+                .and_then(|s| s.get("host"))
+                .and_then(|h| h.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "127.0.0.1".into());
+            (port, host)
         }
+        Err(_) => (3000, "127.0.0.1".into()),
     }
-    None
 }
 
-/// Check whether a port is already in use.
-fn is_port_in_use(port: u16) -> bool {
-    TcpListener::bind(format!("127.0.0.1:{}", port)).is_err()
+fn is_port_in_use(host: &str, port: u16) -> bool {
+    TcpListener::bind(format!("{host}:{port}")).is_err()
 }
 
 pub fn handle() -> Result<()> {
-    // Validate project structure
     if !Path::new("Cargo.toml").exists() {
         anyhow::bail!("No Cargo.toml found. Are you in a Ravel project directory?");
     }
 
-    let port = read_port_from_config().unwrap_or(3000);
+    let (port, host) = read_config();
 
     println!("🚀 Starting server...");
-    println!("   Port: {}", port);
+    println!("   http://{host}:{port}");
 
-    if is_port_in_use(port) {
+    if is_port_in_use(&host, port) {
         eprintln!();
-        eprintln!("⚠️  Warning: Port {} is already in use.", port);
-        eprintln!("   Change the port in config/app.toml or stop the other process.");
+        eprintln!("⚠️  Warning: Port {port} is already in use on {host}.");
+        eprintln!("   Change it in config/app.toml or stop the other process.");
         eprintln!();
     }
 
@@ -54,7 +64,6 @@ pub fn handle() -> Result<()> {
     let status = Command::new("cargo").arg("run").status()?;
 
     if !status.success() {
-        // ctrl-c gives non-zero; that's fine
         if let Some(code) = status.code()
             && code != 130
         {

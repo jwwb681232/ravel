@@ -13,6 +13,7 @@ readme = "../../README.md"
 
 [dependencies]
 ravel-generator = { path = "../ravel-generator" }
+toml = "0.8"
 rand = "0.8"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }

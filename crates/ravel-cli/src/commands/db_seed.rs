@@ -6,37 +6,9 @@
 //! and runs the seeders registered by the user.
 
 use anyhow::Result;
-use std::path::Path;
 use std::process::Command;
 
-/// Check whether a cargo bin target named `name` exists.
-/// See `migrate.rs` for the shared implementation.
-fn find_bin(name: &str) -> Option<String> {
-    let bin_path = format!("src/bin/{name}.rs");
-    if Path::new(&bin_path).exists() {
-        return Some(name.to_string());
-    }
-
-    let cargo_path = Path::new("Cargo.toml");
-    if !cargo_path.exists() {
-        return None;
-    }
-    let content = std::fs::read_to_string(cargo_path).ok()?;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("name = ") {
-            if let Some(quoted) = trimmed.strip_prefix("name = \"") {
-                if let Some(quoted_name) = quoted.strip_suffix('"') {
-                    if quoted_name == name {
-                        return Some(name.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    None
-}
+use super::utils::find_bin;
 
 pub fn handle() -> Result<()> {
     let bin_name = find_bin("seed").ok_or_else(|| {

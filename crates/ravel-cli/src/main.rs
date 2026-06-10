@@ -75,7 +75,7 @@ enum MakeCommands {
     Controller { name: String },
     /// Create a new Middleware
     Middleware { name: String },
-    /// Create a new Model (SeaORM entity)
+    /// Create a new Model (Ravel Eloquent entity)
     Model {
         name: String,
         /// Also generate a migration for this model
