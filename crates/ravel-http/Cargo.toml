@@ -13,6 +13,7 @@ readme = "../../README.md"
 
 [dependencies]
 ravel-core = { path = "../ravel-core" }
+ravel-error = { path = "../ravel-error" }
 axum = { version = "0.8", features = ["multipart"] }
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }

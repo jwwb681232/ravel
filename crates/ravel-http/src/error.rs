@@ -109,9 +109,41 @@ impl IntoResponse for RavelError {
     }
 }
 
-impl From<anyhow::Error> for RavelError {
-    fn from(e: anyhow::Error) -> Self {
-        Self::Internal(e)
+// ── ErrorBridge: automatic conversion from typed errors into HTTP responses ──
+
+use ravel_error::{ErrorKind, HttpError};
+
+/// Any error implementing [`HttpError`] is automatically convertible
+/// into a [`RavelError`] with the correct HTTP status code.
+impl<E: HttpError> From<E> for RavelError {
+    fn from(e: E) -> Self {
+        let msg = e.to_string();
+        match e.kind() {
+            ErrorKind::NotFound => RavelError::NotFound(msg),
+            ErrorKind::BadRequest => RavelError::BadRequest(msg),
+            ErrorKind::Unauthorized => RavelError::Unauthorized(msg),
+            ErrorKind::Forbidden => RavelError::Forbidden(msg),
+            ErrorKind::Validation => {
+                RavelError::ValidationError(HashMap::new())
+            }
+            ErrorKind::Conflict | ErrorKind::TooManyRequests => RavelError::BadRequest(msg),
+            ErrorKind::Internal => {
+                error!(error = %e, "internal error");
+                RavelError::Internal(anyhow::anyhow!("{}", e))
+            }
+        }
+    }
+}
+
+impl RavelError {
+    /// Wrap an untyped [`anyhow::Error`] into a 500 Internal Server Error.
+    ///
+    /// Prefer returning typed errors (e.g. `RavelEloquentError`) which
+    /// auto-convert via the [`HttpError`] bridge.  Use this for catch-all
+    /// error handling.
+    pub fn from_anyhow(e: anyhow::Error) -> Self {
+        error!(error = ?e, "unexpected error");
+        RavelError::Internal(e)
     }
 }
 
@@ -190,7 +222,77 @@ mod tests {
 
     #[test]
     fn test_from_anyhow() {
-        let err: RavelError = anyhow::anyhow!("something broke").into();
+        let err = RavelError::from_anyhow(anyhow::anyhow!("something broke"));
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    // ── ErrorBridge tests ───────────────────────────────────────────
+
+    #[derive(Debug)]
+    struct TestNotFoundError;
+
+    impl std::fmt::Display for TestNotFoundError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "test resource not found")
+        }
+    }
+
+    impl std::error::Error for TestNotFoundError {}
+
+    impl HttpError for TestNotFoundError {
+        fn kind(&self) -> ErrorKind {
+            ErrorKind::NotFound
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestValidationError;
+
+    impl std::fmt::Display for TestValidationError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "validation failed")
+        }
+    }
+
+    impl std::error::Error for TestValidationError {}
+
+    impl HttpError for TestValidationError {
+        fn kind(&self) -> ErrorKind {
+            ErrorKind::Validation
+        }
+    }
+
+    #[test]
+    fn test_http_error_bridge_not_found() {
+        let err: RavelError = TestNotFoundError.into();
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_http_error_bridge_validation() {
+        let err: RavelError = TestValidationError.into();
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[test]
+    fn test_http_error_bridge_internal() {
+        // An error that doesn't override kind() defaults to Internal
+        #[derive(Debug)]
+        struct TestInternalError;
+
+        impl std::fmt::Display for TestInternalError {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "internal failure")
+            }
+        }
+
+        impl std::error::Error for TestInternalError {}
+        impl HttpError for TestInternalError {}
+
+        let err: RavelError = TestInternalError.into();
         let resp = err.into_response();
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
