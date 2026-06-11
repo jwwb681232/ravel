@@ -145,14 +145,14 @@ impl Generator {
     pub fn scaffold_controller(&self, name: &str) -> Result<()> {
         let content = self.render("controller", name)?;
         let snake = to_snake(name);
-        self.create_file(&format!("src/app/Http/Controllers/{snake}.rs"), &content)
+        self.create_file(&format!("app/Http/Controllers/{snake}.rs"), &content)
     }
 
     /// Generate a Middleware file.
     pub fn scaffold_middleware(&self, name: &str) -> Result<()> {
         let content = self.render("middleware", name)?;
         let snake = to_snake(name);
-        self.create_file(&format!("src/app/Http/Middleware/{snake}.rs"), &content)
+        self.create_file(&format!("app/Http/Middleware/{snake}.rs"), &content)
     }
 
     /// Generate a Migration file (timestamped).
@@ -177,28 +177,28 @@ impl Generator {
     pub fn scaffold_provider(&self, name: &str) -> Result<()> {
         let content = self.render("provider", name)?;
         let snake = to_snake(name);
-        self.create_file(&format!("src/app/Providers/{snake}.rs"), &content)
+        self.create_file(&format!("app/Providers/{snake}.rs"), &content)
     }
 
     /// Generate a FormRequest file.
     pub fn scaffold_request(&self, name: &str) -> Result<()> {
         let content = self.render("request", name)?;
         let snake = to_snake(name);
-        self.create_file(&format!("src/app/Http/Requests/{snake}.rs"), &content)
+        self.create_file(&format!("app/Http/Requests/{snake}.rs"), &content)
     }
 
     /// Generate a Model file (SeaORM entity).
     pub fn scaffold_model(&self, name: &str) -> Result<()> {
         let content = self.render("model", name)?;
         let snake = to_snake(name);
-        self.create_file(&format!("src/app/Models/{snake}.rs"), &content)
+        self.create_file(&format!("app/Models/{snake}.rs"), &content)
     }
 
     /// Generate a Job file.
     pub fn scaffold_job(&self, name: &str) -> Result<()> {
         let content = self.render("job", name)?;
         let snake = to_snake(name);
-        self.create_file(&format!("src/app/Jobs/{snake}.rs"), &content)
+        self.create_file(&format!("app/Jobs/{snake}.rs"), &content)
     }
 
     /// Scaffold the initial project skeleton (used by `ravel new`).
@@ -208,18 +208,18 @@ impl Generator {
     /// marker file is written.
     pub fn scaffold_project(&self, project_name: &str, dev: bool) -> Result<()> {
         let dirs = [
-            "src/app/Http/Controllers",
-            "src/app/Http/Middleware",
-            "src/app/Http/Requests",
-            "src/app/Models",
-            "src/app/Jobs",
-            "src/app/Services",
-            "src/app/Providers",
+            "app/Http/Controllers",
+            "app/Http/Middleware",
+            "app/Http/Requests",
+            "app/Models",
+            "app/Jobs",
+            "app/Services",
+            "app/Providers",
             "bootstrap",
             "config",
             "database/migrations",
             "database/seeders",
-            "src/routes",
+            "routes",
             "storage",
             "tests",
             "src",
@@ -272,35 +272,35 @@ impl Generator {
         }
 
         // Module declarations
-        self.overwrite_file("src/routes/mod.rs", "pub mod web;\n")?;
-        self.overwrite_file("src/app/mod.rs", "pub mod Http;\npub mod Models;\npub mod Jobs;\npub mod Providers;\n")?;
-        self.overwrite_file("src/app/Http/mod.rs", "pub mod Controllers;\npub mod Requests;\n")?;
-        self.overwrite_file("src/app/Models/mod.rs", "pub mod user;\npub mod post;\n")?;
-        self.overwrite_file("src/app/Jobs/mod.rs", "pub mod send_welcome_email;\n")?;
-        self.overwrite_file("src/app/Providers/mod.rs", "pub mod app_service_provider;\npub mod route_service_provider;\n")?;
-        self.overwrite_file("src/app/Http/Requests/mod.rs", "pub mod create_post_request;\n")?;
-        self.overwrite_file("src/app/Http/Controllers/mod.rs", "pub mod user_controller;\npub mod post_controller;\n")?;
+        self.overwrite_file("routes/mod.rs", "pub mod web;\n")?;
+        self.overwrite_file("app/mod.rs", "pub mod Http;\npub mod Models;\npub mod Jobs;\npub mod Providers;\n")?;
+        self.overwrite_file("app/Http/mod.rs", "pub mod Controllers;\npub mod Requests;\n")?;
+        self.overwrite_file("app/Models/mod.rs", "pub mod user;\npub mod post;\n")?;
+        self.overwrite_file("app/Jobs/mod.rs", "pub mod send_welcome_email;\n")?;
+        self.overwrite_file("app/Providers/mod.rs", "pub mod app_service_provider;\npub mod route_service_provider;\n")?;
+        self.overwrite_file("app/Http/Requests/mod.rs", "pub mod create_post_request;\n")?;
+        self.overwrite_file("app/Http/Controllers/mod.rs", "pub mod user_controller;\npub mod post_controller;\n")?;
 
         // routes/web.rs
-        self.overwrite_file("src/routes/web.rs", &self.render("routes_web", project_name)?)?;
+        self.overwrite_file("routes/web.rs", &self.render("routes_web", project_name)?)?;
 
-        // src/app/Models/
-        self.create_file("src/app/Models/user.rs", &self.render("user_model", project_name)?)?;
-        self.create_file("src/app/Models/post.rs", &self.render("post_model", project_name)?)?;
+        // app/Models/
+        self.create_file("app/Models/user.rs", &self.render("user_model", project_name)?)?;
+        self.create_file("app/Models/post.rs", &self.render("post_model", project_name)?)?;
 
-        // src/app/Http/Controllers/
-        self.create_file("src/app/Http/Controllers/user_controller.rs", &self.render("user_controller", project_name)?)?;
-        self.create_file("src/app/Http/Controllers/post_controller.rs", &self.render("post_controller", project_name)?)?;
+        // app/Http/Controllers/
+        self.create_file("app/Http/Controllers/user_controller.rs", &self.render("user_controller", project_name)?)?;
+        self.create_file("app/Http/Controllers/post_controller.rs", &self.render("post_controller", project_name)?)?;
 
-        // src/app/Http/Requests/
-        self.create_file("src/app/Http/Requests/create_post_request.rs", CREATE_POST_REQUEST_TEMPLATE)?;
+        // app/Http/Requests/
+        self.create_file("app/Http/Requests/create_post_request.rs", CREATE_POST_REQUEST_TEMPLATE)?;
 
-        // src/app/Jobs/
-        self.create_file("src/app/Jobs/send_welcome_email.rs", SEND_WELCOME_JOB_TEMPLATE)?;
+        // app/Jobs/
+        self.create_file("app/Jobs/send_welcome_email.rs", SEND_WELCOME_JOB_TEMPLATE)?;
 
-        // src/app/Providers/
-        self.create_file("src/app/Providers/app_service_provider.rs", APP_SERVICE_PROVIDER_TEMPLATE)?;
-        self.create_file("src/app/Providers/route_service_provider.rs", ROUTE_SERVICE_PROVIDER_TEMPLATE)?;
+        // app/Providers/
+        self.create_file("app/Providers/app_service_provider.rs", APP_SERVICE_PROVIDER_TEMPLATE)?;
+        self.create_file("app/Providers/route_service_provider.rs", ROUTE_SERVICE_PROVIDER_TEMPLATE)?;
 
         // database/migrations/
         self.create_file("database/migrations/m0001_create_users_table.rs", MIGRATION_USERS_TEMPLATE)?;
@@ -640,8 +640,10 @@ const MAIN_RS_TEMPLATE: &str = r#"use ravel_core::app::Application;
 use ravel_facades::Route;
 use ravel_http::server;
 
-mod routes;
+#[path = "../app/mod.rs"]
 mod app;
+#[path = "../routes/mod.rs"]
+mod routes;
 
 use app::Providers::app_service_provider::AppServiceProvider;
 use app::Providers::route_service_provider::RouteServiceProvider;
@@ -1100,7 +1102,7 @@ mod tests {
         g.scaffold_controller("UserController").unwrap();
 
         let content =
-            std::fs::read_to_string(tmp.join("src/app/Http/Controllers/user_controller.rs")).unwrap();
+            std::fs::read_to_string(tmp.join("app/Http/Controllers/user_controller.rs")).unwrap();
         assert!(content.contains("pub struct UserController"));
         assert!(content.contains("impl Controller for UserController"));
 
@@ -1116,7 +1118,7 @@ mod tests {
         g.scaffold_middleware("AuthMiddleware").unwrap();
 
         let content =
-            std::fs::read_to_string(tmp.join("src/app/Http/Middleware/auth_middleware.rs")).unwrap();
+            std::fs::read_to_string(tmp.join("app/Http/Middleware/auth_middleware.rs")).unwrap();
         assert!(content.contains("pub struct AuthMiddleware"));
 
         let _ = std::fs::remove_dir_all(&tmp);
@@ -1168,7 +1170,7 @@ mod tests {
         g.scaffold_provider("RouteServiceProvider").unwrap();
 
         let content =
-            std::fs::read_to_string(tmp.join("src/app/Providers/route_service_provider.rs")).unwrap();
+            std::fs::read_to_string(tmp.join("app/Providers/route_service_provider.rs")).unwrap();
         assert!(content.contains("impl ServiceProvider for RouteServiceProvider"));
         assert!(content.contains("fn register"));
         assert!(content.contains("fn boot"));
@@ -1185,7 +1187,7 @@ mod tests {
         g.scaffold_request("LoginRequest").unwrap();
 
         let content =
-            std::fs::read_to_string(tmp.join("src/app/Http/Requests/login_request.rs")).unwrap();
+            std::fs::read_to_string(tmp.join("app/Http/Requests/login_request.rs")).unwrap();
         assert!(content.contains("pub struct LoginRequest"));
         assert!(content.contains("impl FormRequest for LoginRequest"));
         assert!(content.contains("fn rules"));
@@ -1206,16 +1208,16 @@ mod tests {
         assert!(tmp.join("config/app.toml").exists());
         assert!(tmp.join(".env").exists());
         assert!(tmp.join("config/database.toml").exists());
-        assert!(tmp.join("src/routes/web.rs").exists());
-        assert!(tmp.join("src/app/Http/Controllers").is_dir());
-        assert!(tmp.join("src/app/Models/user.rs").exists());
-        assert!(tmp.join("src/app/Models/post.rs").exists());
-        assert!(tmp.join("src/app/Http/Controllers/user_controller.rs").exists());
-        assert!(tmp.join("src/app/Http/Controllers/post_controller.rs").exists());
-        assert!(tmp.join("src/app/Http/Requests/create_post_request.rs").exists());
-        assert!(tmp.join("src/app/Jobs/send_welcome_email.rs").exists());
-        assert!(tmp.join("src/app/Providers/app_service_provider.rs").exists());
-        assert!(tmp.join("src/app/Providers/route_service_provider.rs").exists());
+        assert!(tmp.join("routes/web.rs").exists());
+        assert!(tmp.join("app/Http/Controllers").is_dir());
+        assert!(tmp.join("app/Models/user.rs").exists());
+        assert!(tmp.join("app/Models/post.rs").exists());
+        assert!(tmp.join("app/Http/Controllers/user_controller.rs").exists());
+        assert!(tmp.join("app/Http/Controllers/post_controller.rs").exists());
+        assert!(tmp.join("app/Http/Requests/create_post_request.rs").exists());
+        assert!(tmp.join("app/Jobs/send_welcome_email.rs").exists());
+        assert!(tmp.join("app/Providers/app_service_provider.rs").exists());
+        assert!(tmp.join("app/Providers/route_service_provider.rs").exists());
         assert!(tmp.join("database/migrations").is_dir());
         assert!(tmp.join("database/migrations/mod.rs").exists());
         assert!(tmp.join("src/bin/migrate.rs").exists());
