@@ -19,6 +19,10 @@ enum Commands {
     New {
         /// Project name (CamelCase)
         name: String,
+
+        /// Create a dev-mode project with path dependencies to the local framework
+        #[arg(long)]
+        dev: bool,
     },
 
     /// Generate scaffolding files
@@ -105,8 +109,8 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::New { name } => {
-            commands::new::handle(&name)?;
+        Commands::New { name, dev } => {
+            commands::new::handle(&name, dev)?;
         }
 
         Commands::Make(cmd) => {
