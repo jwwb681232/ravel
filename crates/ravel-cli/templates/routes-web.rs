@@ -1,6 +1,6 @@
 use ravel_facades::Route;
-use crate::app::Http::Controllers::user_controller::UserController;
-use crate::app::Http::Controllers::post_controller::PostController;
+use crate::app::http::controllers::user_controller::UserController;
+use crate::app::http::controllers::post_controller::PostController;
 
 pub fn register() {
     // Home

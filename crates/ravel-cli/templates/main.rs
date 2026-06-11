@@ -7,8 +7,8 @@ mod app;
 #[path = "../routes/mod.rs"]
 mod routes;
 
-use app::Providers::app_service_provider::AppServiceProvider;
-use app::Providers::route_service_provider::RouteServiceProvider;
+use app::providers::app_service_provider::AppServiceProvider;
+use app::providers::route_service_provider::RouteServiceProvider;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
