@@ -134,8 +134,10 @@ fn run_dev(marker: &DevMarker) -> Result<()> {
         .get("package")
         .and_then(|p| p.get("name"))
         .and_then(|n| n.as_str())
-        .unwrap_or("my_app");
+        .context("Cargo.toml is missing [package] name field")?;
 
+    // Read config from the project directory (current dir),
+    // not from framework_root — the project owns its own config
     let (port, host) = read_config();
 
     println!("🚀 Starting server (dev mode)...");
