@@ -13,3 +13,4 @@ Cargo.lock
 
 # Dev-mode test project (created via ravel new --dev)
 my-app/
+/.claude
