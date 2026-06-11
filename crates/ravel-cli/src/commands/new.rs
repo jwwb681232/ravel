@@ -26,7 +26,9 @@ fn add_workspace_member(project_name: &str) -> Result<()> {
     // Insert before the closing `]` of the members array.
     let new_content = if let Some(pos) = content.rfind("\n]") {
         let (before, after) = content.split_at(pos);
-        format!("{},\n    {}\n]{}", before, member_entry, &after[2..])
+        // Avoid double-comma when the last entry already has a trailing comma
+        let comma = if before.ends_with(',') { "" } else { "," };
+        format!("{}{}\n    {}\n]{}", before, comma, member_entry, &after[2..])
     } else {
         bail!("Could not find members array closing bracket in workspace Cargo.toml");
     };
