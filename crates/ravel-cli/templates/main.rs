@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use ravel_core::app::Application;
+use ravel_core::app::{Application, set_app_global};
 use ravel_facades::Route;
 use ravel_http::server;
 
@@ -14,7 +14,7 @@ use app::providers::route_service_provider::RouteServiceProvider;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let _app = Application::new()
+    let app = Application::new()
         .load_env(env!("CARGO_MANIFEST_DIR"))?
         .load_config("config")?
         .with_cache()
@@ -22,6 +22,8 @@ async fn main() -> anyhow::Result<()> {
         .register_provider(AppServiceProvider)
         .register_provider(RouteServiceProvider)
         .boot()?;
+
+    set_app_global(app);
 
     let router = Route::build();
 
