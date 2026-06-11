@@ -149,6 +149,8 @@ fn run_dev(marker: &DevMarker) -> Result<()> {
         .arg("run")
         .arg("-p")
         .arg(pkg_name)
+        .arg("--bin")
+        .arg(pkg_name)
         .current_dir(&marker.framework_root)
         .status()?;
 
