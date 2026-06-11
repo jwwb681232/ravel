@@ -59,6 +59,19 @@ impl Generator {
             .unwrap();
         tera.add_raw_template("seed_bin", SEED_BIN_TEMPLATE)
             .unwrap();
+        tera.add_raw_template("database_toml", DATABASE_TOML_TEMPLATE).unwrap();
+        tera.add_raw_template("routes_web", ROUTES_WEB_TEMPLATE).unwrap();
+        tera.add_raw_template("user_model", USER_MODEL_TEMPLATE).unwrap();
+        tera.add_raw_template("post_model", POST_MODEL_TEMPLATE).unwrap();
+        tera.add_raw_template("user_controller", USER_CONTROLLER_TEMPLATE).unwrap();
+        tera.add_raw_template("post_controller", POST_CONTROLLER_TEMPLATE).unwrap();
+        tera.add_raw_template("create_post_request", CREATE_POST_REQUEST_TEMPLATE).unwrap();
+        tera.add_raw_template("send_welcome_job", SEND_WELCOME_JOB_TEMPLATE).unwrap();
+        tera.add_raw_template("app_service_provider", APP_SERVICE_PROVIDER_TEMPLATE).unwrap();
+        tera.add_raw_template("route_service_provider", ROUTE_SERVICE_PROVIDER_TEMPLATE).unwrap();
+        tera.add_raw_template("migration_users", MIGRATION_USERS_TEMPLATE).unwrap();
+        tera.add_raw_template("migration_posts", MIGRATION_POSTS_TEMPLATE).unwrap();
+        tera.add_raw_template("user_seeder", USER_SEEDER_TEMPLATE).unwrap();
         Self {
             root: root.into(),
             tera,
@@ -232,6 +245,39 @@ impl Generator {
 
         // .env.example (always overwrite to keep in sync)
         self.overwrite_file(".env.example", &self.render("env", project_name)?)?;
+
+        // config/database.toml
+        if !self.exists("config/database.toml") {
+            self.overwrite_file("config/database.toml", DATABASE_TOML_TEMPLATE)?;
+        }
+
+        // routes/web.rs
+        self.overwrite_file("routes/web.rs", &self.render("routes_web", project_name)?)?;
+
+        // app/Models/
+        self.create_file("app/Models/User.rs", &self.render("user_model", project_name)?)?;
+        self.create_file("app/Models/Post.rs", &self.render("post_model", project_name)?)?;
+
+        // app/Http/Controllers/
+        self.create_file("app/Http/Controllers/UserController.rs", &self.render("user_controller", project_name)?)?;
+        self.create_file("app/Http/Controllers/PostController.rs", &self.render("post_controller", project_name)?)?;
+
+        // app/Http/Requests/
+        self.create_file("app/Http/Requests/CreatePostRequest.rs", CREATE_POST_REQUEST_TEMPLATE)?;
+
+        // app/Jobs/
+        self.create_file("app/Jobs/SendWelcomeEmail.rs", SEND_WELCOME_JOB_TEMPLATE)?;
+
+        // app/Providers/
+        self.create_file("app/Providers/AppServiceProvider.rs", APP_SERVICE_PROVIDER_TEMPLATE)?;
+        self.create_file("app/Providers/RouteServiceProvider.rs", ROUTE_SERVICE_PROVIDER_TEMPLATE)?;
+
+        // database/migrations/
+        self.create_file("database/migrations/m0001_create_users_table.rs", MIGRATION_USERS_TEMPLATE)?;
+        self.create_file("database/migrations/m0002_create_posts_table.rs", MIGRATION_POSTS_TEMPLATE)?;
+
+        // database/seeders/
+        self.create_file("database/seeders/UserSeeder.rs", USER_SEEDER_TEMPLATE)?;
 
         // Dev marker file — records framework_root for ravel serve
         if dev {
@@ -549,22 +595,33 @@ anyhow  = { workspace = true }
 async-trait = { workspace = true }
 "#;
 
-const MAIN_RS_TEMPLATE: &str = r#"use axum::Router;
-use ravel_http::route::Route;
+const MAIN_RS_TEMPLATE: &str = r#"use ravel_core::app::Application;
+use ravel_facades::Route;
+use ravel_http::server;
+
+mod routes;
+mod app;
+
+use app::Providers::{AppServiceProvider, RouteServiceProvider};
 
 #[tokio::main]
-async fn main() {
-    let app: Router = Route::new()
-        .get("/", || async { "Hello, Ravel! 🚀" })
-        .build();
+async fn main() -> anyhow::Result<()> {
+    let _app = Application::new()
+        .load_env(".")?
+        .load_config("config")?
+        .with_cache()
+        .with_app_key("base64:YOUR_APP_KEY_HERE")?
+        .register_provider(AppServiceProvider)
+        .register_provider(RouteServiceProvider)
+        .boot()?;
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
-        .await
-        .unwrap();
+    let router = Route::build();
 
-    println!("Ravel running at http://127.0.0.1:3000");
+    let host = "127.0.0.1:3000";
+    println!("{{name}} running at http://{host}");
+    server::serve(router, host).await?;
 
-    axum::serve(listener, app).await.unwrap();
+    Ok(())
 }
 "#;
 
@@ -587,7 +644,380 @@ APP_DEBUG=true
 APP_URL=http://localhost:3000
 "#;
 
+const DATABASE_TOML_TEMPLATE: &str = r#"# Database configuration
+# Supports: sqlite, postgres, mysql
+
+[default]
+driver = "sqlite"
+database = "database.sqlite"
+"#;
+
+const ROUTES_WEB_TEMPLATE: &str = r#"use ravel_facades::Route;
+use ravel_http::middleware::log_requests;
+use crate::app::Http::Controllers::{UserController, PostController};
+
+pub fn register() {
+    // Global middleware: log all requests
+    Route::middleware(log_requests);
+
+    // Home
+    Route::get("/", || async { "Hello, {{name}}! 🚀" });
+
+    // Auth (public)
+    Route::post("/login", UserController::login);
+    Route::post("/logout", UserController::logout);
+
+    // Protected API group
+    Route::group("/api", || {
+        Route::get("/users", UserController::index);
+        Route::get("/users/{id}", UserController::show);
+        Route::post("/posts", PostController::store);
+    });
+}
+"#;
+
+const USER_MODEL_TEMPLATE: &str = r#"use ravel_eloquent::Model;
+
+/// User model — one User has many Posts.
+#[derive(Model, Clone, Debug)]
+#[model(table = "users", timestamps)]
+pub struct User {
+    #[model(id)]
+    pub id: i32,
+
+    #[model(string, 255)]
+    pub name: String,
+
+    #[model(string, 254, unique)]
+    pub email: String,
+
+    #[model(hidden)]
+    pub password: String,
+
+    /// User has many Posts (foreign key: posts.user_id)
+    pub posts: HasMany<Post>,
+}
+"#;
+
+const POST_MODEL_TEMPLATE: &str = r#"use ravel_eloquent::Model;
+
+/// Post model — each Post belongs to a User.
+#[derive(Model, Clone, Debug)]
+#[model(table = "posts", timestamps)]
+pub struct Post {
+    #[model(id)]
+    pub id: i32,
+
+    #[model(string, 255)]
+    pub title: String,
+
+    #[model(text)]
+    pub content: String,
+
+    #[model(integer)]
+    #[model(belongs_to, from = "user_id", to = "id")]
+    pub user_id: i32,
+
+    /// The User who wrote this post
+    pub user: BelongsTo<User>,
+}
+"#;
+
+const USER_CONTROLLER_TEMPLATE: &str = r#"use ravel_http::controller::Controller;
+use ravel_core::container::Container;
+use ravel_facades::{Auth, Session, Config, Log, response, redirect};
+use ravel_http::error::RavelError;
+use axum::response::IntoResponse;
+use ravel_http::session::Session as SessionExt;
+
+pub struct UserController;
+
+impl Controller for UserController {
+    fn boot(_container: &Container) -> Self { Self }
+}
+
+impl UserController {
+    /// GET /users — show usage of Config and Log facades
+    pub async fn index() -> impl IntoResponse {
+        let app_name: String = Config::get_or("app.name", "{{name}}");
+        Log::info!("User list requested in {app_name}");
+        response()
+            .json(serde_json::json!({"users": ["alice", "bob"]}))
+            .unwrap()
+    }
+
+    /// GET /users/{id} — requires login; shows Auth facade + RavelError
+    pub async fn show(session: SessionExt, id: u32) -> Result<impl IntoResponse, RavelError> {
+        if Auth::guest(&session) {
+            return Ok(redirect("/login"));
+        }
+        let user_id: Option<i32> = Auth::id(&session);
+        Log::info!("User {id} viewed by {user_id:?}");
+        Ok(response()
+            .json(serde_json::json!({"id": id, "name": "Alice"}))
+            .unwrap())
+    }
+
+    /// POST /login — demonstrate Auth::login + Session::flash
+    pub async fn login(mut session: SessionExt) -> impl IntoResponse {
+        Auth::login(&mut session, 1);
+        Session::flash(&mut session, "status", "Welcome back!");
+        redirect("/")
+    }
+
+    /// POST /logout
+    pub async fn logout(mut session: SessionExt) -> impl IntoResponse {
+        Auth::logout(&mut session);
+        redirect("/")
+    }
+}
+"#;
+
+const POST_CONTROLLER_TEMPLATE: &str = r#"use ravel_http::controller::Controller;
+use ravel_core::container::Container;
+use ravel_facades::{Queue, response, abort};
+use ravel_http::error::RavelError;
+use ravel_http::form_request::Validated;
+use axum::response::IntoResponse;
+use sea_orm::DatabaseConnection;
+
+use crate::app::Http::Requests::CreatePostRequest;
+use crate::app::Models::Post;
+use crate::app::Jobs::SendWelcomeEmail;
+
+pub struct PostController;
+
+impl Controller for PostController {
+    fn boot(_container: &Container) -> Self { Self }
+}
+
+impl PostController {
+    /// POST /posts — FormRequest validation, Model::create, Queue::dispatch
+    pub async fn store(
+        Validated(req): Validated<CreatePostRequest>,
+        db: DatabaseConnection,
+    ) -> Result<impl IntoResponse, RavelError> {
+        let post = Post::create(
+            serde_json::to_value(&req).map_err(|e| abort(500, e.to_string()))?,
+            &db,
+        )
+        .await
+        .map_err(|e| abort(500, e.to_string()))?;
+
+        Queue::dispatch(SendWelcomeEmail { user_id: req.user_id })?;
+
+        Ok(response()
+            .status(201)
+            .json(post.to_public_json())
+            .unwrap())
+    }
+}
+"#;
+
+const CREATE_POST_REQUEST_TEMPLATE: &str = r#"use ravel_http::form_request::FormRequest;
+use ravel_http::validation::{FieldRule, Rule};
+use serde::Deserialize;
+
+/// Validation rules for creating a post.
+#[derive(Debug, Deserialize)]
+pub struct CreatePostRequest {
+    pub title: String,
+    pub content: String,
+    pub user_id: i32,
+}
+
+impl FormRequest for CreatePostRequest {
+    fn rules() -> Vec<FieldRule> {
+        vec![
+            FieldRule::new("title", vec![
+                Rule::Required,
+                Rule::Min(3),
+                Rule::Max(200),
+            ]),
+            FieldRule::new("content", vec![Rule::Required]),
+            FieldRule::new("user_id", vec![
+                Rule::Required,
+                Rule::Exists { table: "users", column: "id", ignore_id: None },
+            ]),
+        ]
+    }
+}
+"#;
+
+const SEND_WELCOME_JOB_TEMPLATE: &str = r#"use ravel_facades::Log;
+use ravel_macros::Job;
+use serde::{Serialize, Deserialize};
+
+/// Background job: send a welcome email after a post is created.
+#[derive(Serialize, Deserialize, Job)]
+#[job(name = "send_welcome_email")]
+pub struct SendWelcomeEmail {
+    pub user_id: i32,
+}
+
+impl SendWelcomeEmail {
+    pub async fn execute(&self) -> anyhow::Result<()> {
+        Log::info!("Welcome email sent to user {}", self.user_id);
+        Ok(())
+    }
+}
+"#;
+
+const APP_SERVICE_PROVIDER_TEMPLATE: &str = r#"use ravel_core::app::ServiceProvider;
+use ravel_core::container::Container;
+use ravel_facades::Queue;
+use anyhow::Result;
+
+pub struct AppServiceProvider;
+
+impl ServiceProvider for AppServiceProvider {
+    fn register(&self, _container: &Container) -> Result<()> {
+        // Register Queue with in-memory driver
+        Queue::memory();
+        Ok(())
+    }
+
+    fn name(&self) -> &str {
+        "AppServiceProvider"
+    }
+}
+"#;
+
+const ROUTE_SERVICE_PROVIDER_TEMPLATE: &str = r#"use ravel_core::app::ServiceProvider;
+use ravel_core::container::Container;
+use anyhow::Result;
+
+pub struct RouteServiceProvider;
+
+impl ServiceProvider for RouteServiceProvider {
+    fn register(&self, _container: &Container) -> Result<()> {
+        Ok(())
+    }
+
+    fn boot(&self, _container: &Container) -> Result<()> {
+        crate::routes::web::register();
+        Ok(())
+    }
+
+    fn name(&self) -> &str {
+        "RouteServiceProvider"
+    }
+}
+"#;
+
+const MIGRATION_USERS_TEMPLATE: &str = r#"use sea_orm_migration::prelude::*;
+
+#[derive(DeriveMigrationName)]
+pub struct Migration;
+
+#[async_trait::async_trait]
+impl MigrationTrait for Migration {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .create_table(
+                Table::create()
+                    .table(Users::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new(Users::Id).integer().not_null().auto_increment().primary_key())
+                    .col(ColumnDef::new(Users::Name).string().not_null())
+                    .col(ColumnDef::new(Users::Email).string().not_null().unique_key())
+                    .col(ColumnDef::new(Users::Password).string().not_null())
+                    .col(ColumnDef::new(Users::CreatedAt).timestamp().not_null()
+                        .default(SimpleExpr::Keyword(Keyword::CurrentTimestamp)))
+                    .col(ColumnDef::new(Users::UpdatedAt).timestamp().not_null()
+                        .default(SimpleExpr::Keyword(Keyword::CurrentTimestamp)))
+                    .to_owned(),
+            )
+            .await
+    }
+
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager.drop_table(Table::drop().table(Users::Table).to_owned()).await
+    }
+}
+
+#[derive(Iden)]
+enum Users {
+    Table,
+    Id,
+    Name,
+    Email,
+    Password,
+    CreatedAt,
+    UpdatedAt,
+}
+"#;
+
+const MIGRATION_POSTS_TEMPLATE: &str = r#"use sea_orm_migration::prelude::*;
+
+#[derive(DeriveMigrationName)]
+pub struct Migration;
+
+#[async_trait::async_trait]
+impl MigrationTrait for Migration {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .create_table(
+                Table::create()
+                    .table(Posts::Table)
+                    .if_not_exists()
+                    .col(ColumnDef::new(Posts::Id).integer().not_null().auto_increment().primary_key())
+                    .col(ColumnDef::new(Posts::UserId).integer().not_null())
+                    .col(ColumnDef::new(Posts::Title).string().not_null())
+                    .col(ColumnDef::new(Posts::Content).text().not_null())
+                    .col(ColumnDef::new(Posts::CreatedAt).timestamp().not_null()
+                        .default(SimpleExpr::Keyword(Keyword::CurrentTimestamp)))
+                    .col(ColumnDef::new(Posts::UpdatedAt).timestamp().not_null()
+                        .default(SimpleExpr::Keyword(Keyword::CurrentTimestamp)))
+                    .foreign_key(
+                        ForeignKey::create()
+                            .name("fk_posts_user_id")
+                            .from(Posts::Table, Posts::UserId)
+                            .to(Users::Table, Users::Id)
+                    )
+                    .to_owned(),
+            )
+            .await
+    }
+
+    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager.drop_table(Table::drop().table(Posts::Table).to_owned()).await
+    }
+}
+
+#[derive(Iden)]
+enum Posts {
+    Table,
+    Id,
+    UserId,
+    Title,
+    Content,
+    CreatedAt,
+    UpdatedAt,
+}
+"#;
+
+const USER_SEEDER_TEMPLATE: &str = r#"use anyhow::Result;
+use sea_orm::DatabaseConnection;
+
+/// Seeder: create sample users
+pub async fn run(db: &DatabaseConnection) -> Result<()> {
+    tracing::info!("UserSeeder: seeding started");
+
+    db.execute_unprepared(
+        "INSERT INTO users (name, email, password, created_at, updated_at) \
+         VALUES ('Alice', 'alice@example.com', 'hashed_password', datetime('now'), datetime('now'))"
+    ).await?;
+
+    tracing::info!("UserSeeder: seeding complete");
+    Ok(())
+}
+"#;
+
 const MIGRATOR_TEMPLATE: &str = r#"use sea_orm_migration::prelude::*;
+
+mod m0001_create_users_table;
+mod m0002_create_posts_table;
 
 pub struct Migrator;
 
@@ -595,8 +1025,8 @@ pub struct Migrator;
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
         vec![
-            // Register new migrations here:
-            // Box::new(m20240101_000001_create_users::Migration),
+            Box::new(m0001_create_users_table::Migration),
+            Box::new(m0002_create_posts_table::Migration),
         ]
     }
 }
@@ -780,7 +1210,17 @@ mod tests {
         assert!(tmp.join("src/main.rs").exists());
         assert!(tmp.join("config/app.toml").exists());
         assert!(tmp.join(".env").exists());
+        assert!(tmp.join("config/database.toml").exists());
+        assert!(tmp.join("routes/web.rs").exists());
         assert!(tmp.join("app/Http/Controllers").is_dir());
+        assert!(tmp.join("app/Models/User.rs").exists());
+        assert!(tmp.join("app/Models/Post.rs").exists());
+        assert!(tmp.join("app/Http/Controllers/UserController.rs").exists());
+        assert!(tmp.join("app/Http/Controllers/PostController.rs").exists());
+        assert!(tmp.join("app/Http/Requests/CreatePostRequest.rs").exists());
+        assert!(tmp.join("app/Jobs/SendWelcomeEmail.rs").exists());
+        assert!(tmp.join("app/Providers/AppServiceProvider.rs").exists());
+        assert!(tmp.join("app/Providers/RouteServiceProvider.rs").exists());
         assert!(tmp.join("database/migrations").is_dir());
         assert!(tmp.join("database/migrations/mod.rs").exists());
         assert!(tmp.join("src/bin/migrate.rs").exists());
