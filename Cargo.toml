@@ -13,8 +13,7 @@ members = [
     "crates/ravel-support",
     "crates/ravel-facades",
     "crates/ravel-test",
-    "my-app",
-    "test-scaffold"
+    "my-app"
 ]
 
 resolver = "2"

@@ -1,6 +1,0 @@
-# Database configuration
-# Supports: sqlite, postgres, mysql
-
-[default]
-driver = "sqlite"
-database = "database.sqlite"
