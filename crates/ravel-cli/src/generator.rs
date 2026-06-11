@@ -514,6 +514,8 @@ ravel-http     = { git = "https://github.com/jwwb681232/ravel" }
 ravel-eloquent = { git = "https://github.com/jwwb681232/ravel" }
 ravel-facades  = { git = "https://github.com/jwwb681232/ravel" }
 ravel-db-seaorm = { git = "https://github.com/jwwb681232/ravel" }
+ravel-support  = { git = "https://github.com/jwwb681232/ravel" }
+ravel-macros   = { git = "https://github.com/jwwb681232/ravel" }
 sea-orm             = { version = "2.0.0-rc.40", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
 sea-orm-migration   = { version = "2.0.0-rc.40" }
 axum   = { version = "0.8", features = ["multipart"] }
@@ -535,6 +537,8 @@ ravel-http     = { path = "../crates/ravel-http" }
 ravel-eloquent = { path = "../crates/ravel-eloquent" }
 ravel-facades  = { path = "../crates/ravel-facades" }
 ravel-db-seaorm = { path = "../crates/ravel-db-seaorm" }
+ravel-support  = { path = "../crates/ravel-support" }
+ravel-macros   = { path = "../crates/ravel-macros" }
 sea-orm             = { workspace = true, features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
 sea-orm-migration   = { workspace = true }
 axum   = { workspace = true, features = ["multipart"] }
