@@ -39,6 +39,7 @@
 - [Schema Builder](database/schema-builder.md)
 
 # Digging Deeper
+- [Framework Dev Workflow](digging-deeper/dev-workflow.md)
 - [Cache](digging-deeper/cache.md)
 - [Encryption](digging-deeper/encryption.md)
 - [Hashing](digging-deeper/hashing.md)
