@@ -33,6 +33,8 @@ cargo run -p ravel-cli -- new my-app --dev
 
 生成的项目使用 `path` 依赖指向本地框架 crate，修改框架代码后无需 `git push`。
 
+同时自动将项目加入 workspace `Cargo.toml` 的 `members` 列表，因此后续在项目目录内也可以直接用 `cargo run -p ravel-cli --`。
+
 ## 开发服务器
 
 ```bash
