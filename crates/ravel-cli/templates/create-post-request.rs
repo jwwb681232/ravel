@@ -21,7 +21,6 @@ impl FormRequest for CreatePostRequest {
             FieldRule::new("content", vec![Rule::Required]),
             FieldRule::new("user_id", vec![
                 Rule::Required,
-                Rule::Exists { table: "users", column: "id" },
             ]),
         ]
     }
