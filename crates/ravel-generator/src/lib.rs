@@ -185,6 +185,10 @@ impl Generator {
     }
 
     /// Scaffold the initial project skeleton (used by `ravel new`).
+    ///
+    /// When `dev` is true, Cargo.toml uses `path` dependencies
+    /// pointing to the local framework crates, and a `.ravel-dev`
+    /// marker file is written.
     pub fn scaffold_project(&self, project_name: &str, dev: bool) -> Result<()> {
         let dirs = [
             "app/Http/Controllers",
@@ -238,9 +242,11 @@ impl Generator {
         if dev {
             let framework_root = std::env::current_dir()
                 .context("Failed to read current directory")?;
+            // TOML requires forward slashes in paths
+            let root_str = framework_root.display().to_string().replace('\\', "/");
             let marker = format!(
                 "framework_root = \"{}\"\n",
-                framework_root.display()
+                root_str
             );
             self.overwrite_file(".ravel-dev", &marker)?;
         }
