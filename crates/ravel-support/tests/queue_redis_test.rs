@@ -1,5 +1,6 @@
 //! Integration tests for RedisDriver — requires a running Redis on localhost:6379.
-//! Run with: cargo test -p ravel-support --features redis --test queue_default -- --test-threads=1
+//! Run with: cargo test -p ravel-support --features redis --test queue_redis -- --test-threads=1
+#![cfg(feature = "redis")]
 
 use ravel_support::queue::{Job, JobPayload, Queue};
 
