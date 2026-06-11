@@ -7,3 +7,9 @@ Cargo.lock
 /reasonix.toml
 /.reasonix
 /.codegraph
+
+# Superpowers brainstorming artifacts
+.superpowers/
+
+# Dev-mode test project (created via ravel new --dev)
+my-app/
