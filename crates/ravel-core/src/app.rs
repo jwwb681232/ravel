@@ -29,7 +29,7 @@ use crate::config::ConfigRepo;
 use crate::container::Container;
 use crate::env::EnvRepo;
 use crate::log::{self, Log};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::sync::Mutex;
 
 // ── Task-local APP (async HTTP handler path) ───────────────────────────
@@ -326,6 +326,18 @@ impl Application {
         let crypt = crate::crypt::Crypt::from_key(key)?;
         self.container.instance(crypt);
         Ok(self)
+    }
+
+    /// Register the encrypter by reading `APP_KEY` from the loaded environment.
+    ///
+    /// This is the preferred way to set the application key — it reads
+    /// `APP_KEY` from the `.env` file loaded by [`load_env`](Self::load_env).
+    /// Call `ravel key:generate` to create or regenerate the key in `.env`.
+    pub fn with_app_key_from_env(self) -> Result<Self> {
+        let key = self.env.get("APP_KEY")
+            .context("APP_KEY not found in environment. Run `ravel key:generate` to create one.")?
+            .to_string();
+        self.with_app_key(&key)
     }
 }
 

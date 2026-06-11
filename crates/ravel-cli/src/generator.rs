@@ -15,7 +15,9 @@
 //! - `{{timestamp}}` — current UTC timestamp (for migrations)
 
 use anyhow::{Context, Result, bail};
+use base64::Engine;
 use chrono::Utc;
+use rand::RngCore;
 use std::fs;
 use std::path::PathBuf;
 use tera::{Context as TeraContext, Tera};
@@ -245,13 +247,24 @@ impl Generator {
         // Default config file
         self.overwrite_file("config/app.toml", &self.render("app_toml", project_name)?)?;
 
+        // Generate a random application key for this project
+        let app_key = generate_app_key();
+
+        // Build a Tera context that includes the app key
+        let mut env_ctx = Self::make_context(project_name);
+        env_ctx.insert("app_key", &app_key);
+        let env_content = self
+            .tera
+            .render("env", &env_ctx)
+            .context("Failed to render env template")?;
+
         // Default .env
         if !self.exists(".env") {
-            self.overwrite_file(".env", &self.render("env", project_name)?)?;
+            self.overwrite_file(".env", &env_content)?;
         }
 
         // .env.example (always overwrite to keep in sync)
-        self.overwrite_file(".env.example", &self.render("env", project_name)?)?;
+        self.overwrite_file(".env.example", &env_content)?;
 
         // config/database.toml
         if !self.exists("config/database.toml") {
@@ -348,6 +361,13 @@ fn to_snake(s: &str) -> String {
 
 fn to_kebab(s: &str) -> String {
     to_snake(s).replace('_', "-")
+}
+
+/// Generate a random 32-byte base64-encoded application key.
+fn generate_app_key() -> String {
+    let mut key = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut key);
+    base64::engine::general_purpose::STANDARD.encode(&key)
 }
 
 // ── Templates ──────────────────────────────────────────────────────
@@ -629,10 +649,10 @@ use app::Providers::route_service_provider::RouteServiceProvider;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let _app = Application::new()
-        .load_env(".")?
+        .load_env(env!("CARGO_MANIFEST_DIR"))?
         .load_config("config")?
         .with_cache()
-        .with_app_key("base64:YOUR_APP_KEY_HERE")?
+        .with_app_key_from_env()?
         .register_provider(AppServiceProvider)
         .register_provider(RouteServiceProvider)
         .boot()?;
@@ -664,6 +684,7 @@ const ENV_TEMPLATE: &str = r#"APP_NAME={{name}}
 APP_ENV=local
 APP_DEBUG=true
 APP_URL=http://localhost:3000
+APP_KEY=base64:{{app_key}}
 "#;
 
 const DATABASE_TOML_TEMPLATE: &str = r#"# Database configuration

@@ -38,6 +38,12 @@ impl EnvRepo {
 
     /// Load a `.env` file into the repo.
     ///
+    /// Uses `dotenvy` to locate the file: when `path` is a bare filename
+    /// (e.g. `.env`), dotenvy searches from the current directory upward
+    /// until it finds a match.  When `path` is an absolute or explicit
+    /// relative path, dotenvy joins it with the current directory and
+    /// searches upward from there.
+    ///
     /// Variables from the file are added to the internal map; existing
     /// real environment variables are **not** overwritten by the file.
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
@@ -45,14 +51,20 @@ impl EnvRepo {
 
         let mut repo = Self::new();
 
-        if path.is_file() {
-            // dotenvy::from_filename_iter returns an iterator of (key, value) pairs.
-            // It does NOT change the real process environment.
-            let iter = dotenvy::from_filename_iter(path)?;
-
-            for entry in iter {
-                let (key, value) = entry?;
-                repo.vars.insert(key, value);
+        // Delegate file discovery entirely to dotenvy — it searches from
+        // the current directory upward, so a bare ".env" will be found
+        // in any ancestor.  If the file simply doesn't exist the error is
+        // swallowed: we'll continue with just the real process environment.
+        match dotenvy::from_filename_iter(path) {
+            Ok(iter) => {
+                for entry in iter {
+                    let (key, value) = entry?;
+                    repo.vars.insert(key, value);
+                }
+            }
+            Err(_) => {
+                // .env not found or unreadable — that's ok, the caller may
+                // still find what they need in the real environment.
             }
         }
 
