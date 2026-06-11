@@ -1,6 +1,9 @@
 use ravel_http::controller::Controller;
 use ravel_core::container::Container;
+use ravel_http::form_request::Validated;
+use ravel_http::error::RavelError;
 use axum::response::IntoResponse;
+use crate::app::http::requests::create_post_request::CreatePostRequest;
 
 pub struct PostController;
 
@@ -10,8 +13,8 @@ impl Controller for PostController {
 
 impl PostController {
     pub async fn store(
-        axum::extract::Json(body): axum::extract::Json<serde_json::Value>,
-    ) -> impl IntoResponse {
-        format!("Post created: {body}")
+        Validated(req): Validated<CreatePostRequest>,
+    ) -> Result<impl IntoResponse, RavelError> {
+        Ok(format!("Post created: {} — {}", req.title, req.content))
     }
 }
