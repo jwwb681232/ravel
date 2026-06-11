@@ -20,3 +20,4 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 tera = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+include_dir = "0.7"
