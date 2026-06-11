@@ -18,3 +18,56 @@ members = [
 ]
 
 resolver = "2"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1" }
+
+# HTTP / web
+axum = { version = "0.8" }
+tower = { version = "0.5" }
+url = { version = "2" }
+http = { version = "1" }
+
+# Database (SeaORM)
+sea-orm = { version = "2.0.0-rc.40" }
+sea-orm-migration = { version = "2.0.0-rc.40" }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+
+# Error handling
+anyhow = { version = "1" }
+thiserror = { version = "2" }
+
+# Async
+async-trait = { version = "0.1" }
+
+# Logging / tracing
+tracing = { version = "0.1" }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Templating
+tera = { version = "1" }
+
+# Cryptography / encoding
+base64 = { version = "0.22" }
+bcrypt = { version = "0.16" }
+rand = { version = "0.8" }
+
+# Data / time
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Config / serialization formats
+toml = { version = "0.8" }
+
+# Cache / session (optional)
+redis = { version = "0.25", features = ["tokio-comp"] }
+
+# Concurrency
+parking_lot = { version = "0.12" }

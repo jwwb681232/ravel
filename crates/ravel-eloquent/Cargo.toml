@@ -13,14 +13,14 @@ ravel-eloquent-macros = { path = "../ravel-eloquent-macros" }
 ravel-core = { path = "../ravel-core" }
 ravel-db-seaorm = { path = "../ravel-db-seaorm" }
 ravel-error = { path = "../ravel-error" }
-sea-orm = { version = "2.0.0-rc.40", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-async-trait = "0.1"
-thiserror = "2"
+sea-orm = { workspace = true, features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 ravel-test = { path = "../ravel-test" }
-chrono = "0.4"
-serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["full"] }
+chrono = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true, features = ["full"] }

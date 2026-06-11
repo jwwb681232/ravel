@@ -14,26 +14,26 @@ readme = "../../README.md"
 [dependencies]
 ravel-core = { path = "../ravel-core" }
 ravel-error = { path = "../ravel-error" }
-sea-orm = { version = "2.0.0-rc.40", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
-axum = { version = "0.8", features = ["multipart"] }
-anyhow = "1"
-tokio = { version = "1", features = ["full"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-url = "2"
-tera = "1"
+sea-orm = { workspace = true, features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
+axum = { workspace = true, features = ["multipart"] }
+anyhow = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+url = { workspace = true }
+tera = { workspace = true }
 regex = "1"
-tower = "0.5"
-tracing = "0.1"
-rand = "0.8"
-base64 = "0.22"
+tower = { workspace = true }
+tracing = { workspace = true }
+rand = { workspace = true }
+base64 = { workspace = true }
 hmac = "0.12"
 sha2 = "0.10"
-uuid = { version = "1", features = ["v4", "serde"] }
-redis = { version = "0.25", features = ["tokio-comp"], optional = true }
+uuid = { workspace = true }
+redis = { workspace = true, optional = true }
 
 [dev-dependencies]
-tower = { version = "0.5", features = ["util"] }
+tower = { workspace = true, features = ["util"] }
 
 [[test]]
 name = "session_redis"

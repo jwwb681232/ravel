@@ -521,7 +521,7 @@ ravel-facades  = { git = "https://github.com/jwwb681232/ravel" }
 ravel-db-seaorm = { git = "https://github.com/jwwb681232/ravel" }
 sea-orm             = { version = "2.0.0-rc.40", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
 sea-orm-migration   = { version = "2.0.0-rc.40" }
-axum   = "0.8"
+axum   = { version = "0.8", features = ["multipart"] }
 tokio  = { version = "1", features = ["full"] }
 serde  = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -540,14 +540,14 @@ ravel-http     = { path = "../crates/ravel-http" }
 ravel-eloquent = { path = "../crates/ravel-eloquent" }
 ravel-facades  = { path = "../crates/ravel-facades" }
 ravel-db-seaorm = { path = "../crates/ravel-db-seaorm" }
-sea-orm             = { version = "2.0.0-rc.40", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
-sea-orm-migration   = { version = "2.0.0-rc.40" }
-axum   = "0.8"
-tokio  = { version = "1", features = ["full"] }
-serde  = { version = "1", features = ["derive"] }
-serde_json = "1"
-anyhow  = "1"
-async-trait = "0.1"
+sea-orm             = { workspace = true, features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
+sea-orm-migration   = { workspace = true }
+axum   = { workspace = true, features = ["multipart"] }
+tokio  = { workspace = true, features = ["full"] }
+serde  = { workspace = true }
+serde_json = { workspace = true }
+anyhow  = { workspace = true }
+async-trait = { workspace = true }
 "#;
 
 const MAIN_RS_TEMPLATE: &str = r#"use axum::Router;

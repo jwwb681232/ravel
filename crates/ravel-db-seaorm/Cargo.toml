@@ -13,10 +13,10 @@ readme = "../../README.md"
 
 [dependencies]
 ravel-core = { path = "../ravel-core" }
-sea-orm = "2.0.0-rc.40"
-sea-orm-migration = "2.0.0-rc.40"
-serde = { version = "1", features = ["derive"] }
-anyhow = "1"
-toml = "0.8"
-parking_lot = "0.12"
-async-trait = "0.1"
+sea-orm = { workspace = true }
+sea-orm-migration = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }
+toml = { workspace = true }
+parking_lot = { workspace = true }
+async-trait = { workspace = true }

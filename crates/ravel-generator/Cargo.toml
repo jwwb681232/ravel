@@ -12,6 +12,6 @@ categories = ["development-tools", "web-programming"]
 readme = "../../README.md"
 
 [dependencies]
-anyhow = "1"
-chrono = "0.4"
-tera = "1"
+anyhow = { workspace = true }
+chrono = { workspace = true }
+tera = { workspace = true }

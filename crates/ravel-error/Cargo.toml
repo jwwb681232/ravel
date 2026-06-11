@@ -6,4 +6,4 @@ description = "Shared error protocol for the Ravel framework"
 license = "MIT"
 
 [dependencies]
-http = "1"
+http = { workspace = true }
