@@ -19,6 +19,7 @@ use base64::Engine;
 use chrono::Utc;
 use include_dir::{include_dir, Dir};
 use rand::RngCore;
+use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
 use tera::{Context as TeraContext, Tera};
@@ -30,7 +31,7 @@ static TEMPLATES: Dir = include_dir!("$CARGO_MANIFEST_DIR/templates");
 /// The scaffolding engine, rooted at a project directory.
 pub struct Generator {
     root: PathBuf,
-    tera: Tera,
+    tera: RefCell<Tera>,
 }
 
 impl Generator {
@@ -38,7 +39,7 @@ impl Generator {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self {
             root: root.into(),
-            tera: Tera::default(),
+            tera: RefCell::new(Tera::default()),
         }
     }
 
@@ -96,7 +97,7 @@ impl Generator {
     /// Render a template file by name with name-derived variables.
     ///
     /// `file_name` is the path relative to `templates/` (e.g. `"controller.rs"`).
-    pub fn render(&mut self, file_name: &str, name: &str) -> Result<String> {
+    pub fn render(&self, file_name: &str, name: &str) -> Result<String> {
         let ctx = Self::make_context(name);
         let file = TEMPLATES
             .get_file(file_name)
@@ -105,6 +106,7 @@ impl Generator {
             .contents_utf8()
             .with_context(|| format!("Template '{file_name}' is not valid UTF-8"))?;
         self.tera
+            .borrow_mut()
             .render_str(src, &ctx)
             .with_context(|| format!("Failed to render template '{file_name}'"))
     }
@@ -114,7 +116,7 @@ impl Generator {
     /// Use this when you need extra context variables beyond what
     /// `make_context()` provides (e.g. `app_key` for the env template).
     pub fn render_with_context(
-        &mut self,
+        &self,
         file_name: &str,
         ctx: &TeraContext,
     ) -> Result<String> {
@@ -125,6 +127,7 @@ impl Generator {
             .contents_utf8()
             .with_context(|| format!("Template '{file_name}' is not valid UTF-8"))?;
         self.tera
+            .borrow_mut()
             .render_str(src, ctx)
             .with_context(|| format!("Failed to render template '{file_name}'"))
     }
