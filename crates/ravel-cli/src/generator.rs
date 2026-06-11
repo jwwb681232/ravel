@@ -17,10 +17,13 @@
 use anyhow::{Context, Result, bail};
 use base64::Engine;
 use chrono::Utc;
+use include_dir::{include_dir, Dir};
 use rand::RngCore;
 use std::fs;
 use std::path::PathBuf;
 use tera::{Context as TeraContext, Tera};
+
+static TEMPLATES: Dir = include_dir!("$CARGO_MANIFEST_DIR/templates");
 
 // ── Generator ─────────────────────────────────────────────────────
 
@@ -33,50 +36,9 @@ pub struct Generator {
 impl Generator {
     /// Create a generator targeting `root` as the project root.
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        let mut tera = Tera::default();
-        // Register all built-in templates
-        tera.add_raw_template("controller", CONTROLLER_TEMPLATE)
-            .unwrap();
-        tera.add_raw_template("middleware", MIDDLEWARE_TEMPLATE)
-            .unwrap();
-        tera.add_raw_template("migration", MIGRATION_TEMPLATE)
-            .unwrap();
-        tera.add_raw_template("seeder", SEEDER_TEMPLATE).unwrap();
-        tera.add_raw_template("provider", PROVIDER_TEMPLATE)
-            .unwrap();
-        tera.add_raw_template("request", REQUEST_TEMPLATE).unwrap();
-        tera.add_raw_template("model", MODEL_TEMPLATE).unwrap();
-        tera.add_raw_template("job", JOB_TEMPLATE).unwrap();
-        tera.add_raw_template("cargo_toml", CARGO_TOML_TEMPLATE)
-            .unwrap();
-        tera.add_raw_template("cargo_toml_dev", CARGO_TOML_DEV_TEMPLATE)
-            .unwrap();
-        tera.add_raw_template("main_rs", MAIN_RS_TEMPLATE).unwrap();
-        tera.add_raw_template("app_toml", APP_TOML_TEMPLATE)
-            .unwrap();
-        tera.add_raw_template("env", ENV_TEMPLATE).unwrap();
-        tera.add_raw_template("migrator", MIGRATOR_TEMPLATE)
-            .unwrap();
-        tera.add_raw_template("migrate_bin", MIGRATE_BIN_TEMPLATE)
-            .unwrap();
-        tera.add_raw_template("seed_bin", SEED_BIN_TEMPLATE)
-            .unwrap();
-        tera.add_raw_template("database_toml", DATABASE_TOML_TEMPLATE).unwrap();
-        tera.add_raw_template("routes_web", ROUTES_WEB_TEMPLATE).unwrap();
-        tera.add_raw_template("user_model", USER_MODEL_TEMPLATE).unwrap();
-        tera.add_raw_template("post_model", POST_MODEL_TEMPLATE).unwrap();
-        tera.add_raw_template("user_controller", USER_CONTROLLER_TEMPLATE).unwrap();
-        tera.add_raw_template("post_controller", POST_CONTROLLER_TEMPLATE).unwrap();
-        tera.add_raw_template("create_post_request", CREATE_POST_REQUEST_TEMPLATE).unwrap();
-        tera.add_raw_template("send_welcome_job", SEND_WELCOME_JOB_TEMPLATE).unwrap();
-        tera.add_raw_template("app_service_provider", APP_SERVICE_PROVIDER_TEMPLATE).unwrap();
-        tera.add_raw_template("route_service_provider", ROUTE_SERVICE_PROVIDER_TEMPLATE).unwrap();
-        tera.add_raw_template("migration_users", MIGRATION_USERS_TEMPLATE).unwrap();
-        tera.add_raw_template("migration_posts", MIGRATION_POSTS_TEMPLATE).unwrap();
-        tera.add_raw_template("user_seeder", USER_SEEDER_TEMPLATE).unwrap();
         Self {
             root: root.into(),
-            tera,
+            tera: Tera::default(),
         }
     }
 
@@ -131,12 +93,40 @@ impl Generator {
         ctx
     }
 
-    /// Render a built-in template by name with the given name-derived variables.
-    pub fn render(&self, template_name: &str, name: &str) -> Result<String> {
+    /// Render a template file by name with name-derived variables.
+    ///
+    /// `file_name` is the path relative to `templates/` (e.g. `"controller.rs"`).
+    pub fn render(&mut self, file_name: &str, name: &str) -> Result<String> {
         let ctx = Self::make_context(name);
+        let file = TEMPLATES
+            .get_file(file_name)
+            .with_context(|| format!("Template not found: '{file_name}'"))?;
+        let src = file
+            .contents_utf8()
+            .with_context(|| format!("Template '{file_name}' is not valid UTF-8"))?;
         self.tera
-            .render(template_name, &ctx)
-            .with_context(|| format!("Failed to render template '{template_name}'"))
+            .render_str(src, &ctx)
+            .with_context(|| format!("Failed to render template '{file_name}'"))
+    }
+
+    /// Render a template with an already-built Tera context.
+    ///
+    /// Use this when you need extra context variables beyond what
+    /// `make_context()` provides (e.g. `app_key` for the env template).
+    pub fn render_with_context(
+        &mut self,
+        file_name: &str,
+        ctx: &TeraContext,
+    ) -> Result<String> {
+        let file = TEMPLATES
+            .get_file(file_name)
+            .with_context(|| format!("Template not found: '{file_name}'"))?;
+        let src = file
+            .contents_utf8()
+            .with_context(|| format!("Template '{file_name}' is not valid UTF-8"))?;
+        self.tera
+            .render_str(src, ctx)
+            .with_context(|| format!("Failed to render template '{file_name}'"))
     }
 
     // ── Built-in scaffolds ──────────────────────────────────────
@@ -254,8 +244,7 @@ impl Generator {
         let mut env_ctx = Self::make_context(project_name);
         env_ctx.insert("app_key", &app_key);
         let env_content = self
-            .tera
-            .render("env", &env_ctx)
+            .render_with_context("env", &env_ctx)
             .context("Failed to render env template")?;
 
         // Default .env
