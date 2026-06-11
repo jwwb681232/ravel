@@ -274,7 +274,7 @@ impl Generator {
         // Module declarations
         self.overwrite_file("routes/mod.rs", "pub mod web;\n")?;
         self.overwrite_file("app/mod.rs", "pub mod http;\npub mod models;\npub mod jobs;\npub mod providers;\n")?;
-        self.overwrite_file("app/http/mod.rs", "pub mod controllers;\npub mod middleware;\npub mod requests;\n")?;
+        self.overwrite_file("app/http/mod.rs", "pub mod controllers;\npub mod requests;\n")?;
         self.overwrite_file("app/models/mod.rs", "pub mod user;\npub mod post;\n")?;
         self.overwrite_file("app/jobs/mod.rs", "pub mod send_welcome_email;\n")?;
         self.overwrite_file("app/providers/mod.rs", "pub mod app_service_provider;\npub mod route_service_provider;\n")?;
