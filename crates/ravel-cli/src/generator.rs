@@ -274,7 +274,7 @@ impl Generator {
         // Module declarations
         self.overwrite_file("routes/mod.rs", "pub mod web;\n")?;
         self.overwrite_file("app/mod.rs", "pub mod http;\npub mod models;\npub mod jobs;\npub mod providers;\n")?;
-        self.overwrite_file("app/http/mod.rs", "pub mod controllers;\npub mod requests;\n")?;
+        self.overwrite_file("app/http/mod.rs", "pub mod controllers;\npub mod middleware;\npub mod requests;\n")?;
         self.overwrite_file("app/models/mod.rs", "pub mod user;\npub mod post;\n")?;
         self.overwrite_file("app/jobs/mod.rs", "pub mod send_welcome_email;\n")?;
         self.overwrite_file("app/providers/mod.rs", "pub mod app_service_provider;\npub mod route_service_provider;\n")?;
@@ -294,6 +294,10 @@ impl Generator {
 
         // app/http/requests/
         self.create_file("app/http/requests/create_post_request.rs", Self::raw_template("create-post-request.rs")?)?;
+
+        // app/http/middleware/
+        self.overwrite_file("app/http/middleware/mod.rs", "pub mod cors;\n")?;
+        self.create_file("app/http/middleware/cors.rs", Self::raw_template("cors-middleware.rs")?)?;
 
         // app/jobs/
         self.create_file("app/jobs/send_welcome_email.rs", Self::raw_template("send-welcome-job.rs")?)?;
@@ -426,7 +430,7 @@ mod tests {
 
         let content =
             std::fs::read_to_string(tmp.join("app/http/middleware/auth_middleware.rs")).unwrap();
-        assert!(content.contains("pub struct AuthMiddleware"));
+        assert!(content.contains("pub async fn handle"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -522,6 +526,7 @@ mod tests {
         assert!(tmp.join("app/http/controllers/user_controller.rs").exists());
         assert!(tmp.join("app/http/controllers/post_controller.rs").exists());
         assert!(tmp.join("app/http/requests/create_post_request.rs").exists());
+        assert!(tmp.join("app/http/middleware/cors.rs").exists());
         assert!(tmp.join("app/jobs/send_welcome_email.rs").exists());
         assert!(tmp.join("app/providers/app_service_provider.rs").exists());
         assert!(tmp.join("app/providers/route_service_provider.rs").exists());

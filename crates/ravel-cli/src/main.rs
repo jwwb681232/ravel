@@ -151,7 +151,7 @@ async fn main() -> Result<()> {
                     println!("✅ FormRequest created: {}", name);
                 }
                 MakeCommands::Job { name } => {
-                    g.ensure_dir("app/Jobs")?;
+                    g.ensure_dir("app/jobs")?;
                     g.scaffold_job(&name)?;
                     println!("✅ Job created: {}", name);
                 }

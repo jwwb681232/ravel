@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use ravel_core::app::Application;
 use ravel_facades::Route;
 use ravel_http::server;
