@@ -1,8 +1,9 @@
 mod commands;
+mod generator;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use ravel_generator::Generator;
+use crate::generator::Generator;
 
 #[derive(Parser)]
 #[command(name = "ravel")]

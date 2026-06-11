@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use ravel_generator::Generator;
+use crate::generator::Generator;
 use std::path::Path;
 
 /// Check whether the current directory is the Ravel framework root.

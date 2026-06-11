@@ -12,10 +12,11 @@ categories = ["command-line-utilities", "web-programming"]
 readme = "../../README.md"
 
 [dependencies]
-ravel-generator = { path = "../ravel-generator" }
 toml = { workspace = true }
 rand = { workspace = true }
 base64 = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
+chrono = { workspace = true }
+tera = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

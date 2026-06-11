@@ -9,7 +9,6 @@ members = [
     "crates/ravel-eloquent-macros",
     "crates/ravel-error",
     "crates/ravel-http",
-    "crates/ravel-generator",
     "crates/ravel-macros",
     "crates/ravel-support",
     "crates/ravel-facades",

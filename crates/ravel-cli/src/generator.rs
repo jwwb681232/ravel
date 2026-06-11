@@ -17,7 +17,7 @@
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tera::{Context as TeraContext, Tera};
 
 // ── Generator ─────────────────────────────────────────────────────
@@ -63,11 +63,6 @@ impl Generator {
             root: root.into(),
             tera,
         }
-    }
-
-    /// Return the project root.
-    pub fn root(&self) -> &Path {
-        &self.root
     }
 
     /// Ensure a sub-directory exists.
