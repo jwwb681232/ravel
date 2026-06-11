@@ -5,7 +5,8 @@ use ravel_http::server;
 mod routes;
 mod app;
 
-use app::Providers::{AppServiceProvider, RouteServiceProvider};
+use app::Providers::app_service_provider::AppServiceProvider;
+use app::Providers::route_service_provider::RouteServiceProvider;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -21,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
     let router = Route::build();
 
     let host = "127.0.0.1:3000";
-    println!("test-scaffold running at http://{host}");
+    println!("MyApp running at http://{host}");
     server::serve(router, host).await?;
 
     Ok(())

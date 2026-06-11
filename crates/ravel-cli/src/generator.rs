@@ -142,13 +142,15 @@ impl Generator {
     /// Generate a Controller file.
     pub fn scaffold_controller(&self, name: &str) -> Result<()> {
         let content = self.render("controller", name)?;
-        self.create_file(&format!("src/app/Http/Controllers/{name}.rs"), &content)
+        let snake = to_snake(name);
+        self.create_file(&format!("src/app/Http/Controllers/{snake}.rs"), &content)
     }
 
     /// Generate a Middleware file.
     pub fn scaffold_middleware(&self, name: &str) -> Result<()> {
         let content = self.render("middleware", name)?;
-        self.create_file(&format!("src/app/Http/Middleware/{name}.rs"), &content)
+        let snake = to_snake(name);
+        self.create_file(&format!("src/app/Http/Middleware/{snake}.rs"), &content)
     }
 
     /// Generate a Migration file (timestamped).
@@ -165,31 +167,36 @@ impl Generator {
     /// Generate a Seeder file.
     pub fn scaffold_seeder(&self, name: &str) -> Result<()> {
         let content = self.render("seeder", name)?;
-        self.create_file(&format!("database/seeders/{name}.rs"), &content)
+        let snake = to_snake(name);
+        self.create_file(&format!("database/seeders/{snake}.rs"), &content)
     }
 
     /// Generate a ServiceProvider file.
     pub fn scaffold_provider(&self, name: &str) -> Result<()> {
         let content = self.render("provider", name)?;
-        self.create_file(&format!("src/app/Providers/{name}.rs"), &content)
+        let snake = to_snake(name);
+        self.create_file(&format!("src/app/Providers/{snake}.rs"), &content)
     }
 
     /// Generate a FormRequest file.
     pub fn scaffold_request(&self, name: &str) -> Result<()> {
         let content = self.render("request", name)?;
-        self.create_file(&format!("src/app/Http/Requests/{name}.rs"), &content)
+        let snake = to_snake(name);
+        self.create_file(&format!("src/app/Http/Requests/{snake}.rs"), &content)
     }
 
     /// Generate a Model file (SeaORM entity).
     pub fn scaffold_model(&self, name: &str) -> Result<()> {
         let content = self.render("model", name)?;
-        self.create_file(&format!("src/app/Models/{name}.rs"), &content)
+        let snake = to_snake(name);
+        self.create_file(&format!("src/app/Models/{snake}.rs"), &content)
     }
 
     /// Generate a Job file.
     pub fn scaffold_job(&self, name: &str) -> Result<()> {
         let content = self.render("job", name)?;
-        self.create_file(&format!("src/app/Jobs/{name}.rs"), &content)
+        let snake = to_snake(name);
+        self.create_file(&format!("src/app/Jobs/{snake}.rs"), &content)
     }
 
     /// Scaffold the initial project skeleton (used by `ravel new`).
@@ -253,34 +260,34 @@ impl Generator {
 
         // Module declarations
         self.overwrite_file("src/routes/mod.rs", "pub mod web;\n")?;
-        self.overwrite_file("src/app/mod.rs", "pub mod Http;\npub mod Models;\npub mod Jobs;\npub mod Providers;\npub mod Services;\n")?;
-        self.overwrite_file("src/app/Http/mod.rs", "pub mod Controllers;\npub mod Middleware;\npub mod Requests;\n")?;
-        self.overwrite_file("src/app/Models/mod.rs", "pub mod User;\npub mod Post;\n")?;
-        self.overwrite_file("src/app/Jobs/mod.rs", "pub mod SendWelcomeEmail;\n")?;
-        self.overwrite_file("src/app/Providers/mod.rs", "pub mod AppServiceProvider;\npub mod RouteServiceProvider;\n")?;
-        self.overwrite_file("src/app/Http/Requests/mod.rs", "pub mod CreatePostRequest;\n")?;
-        self.overwrite_file("src/app/Http/Controllers/mod.rs", "pub mod UserController;\npub mod PostController;\n")?;
+        self.overwrite_file("src/app/mod.rs", "pub mod Http;\npub mod Models;\npub mod Jobs;\npub mod Providers;\n")?;
+        self.overwrite_file("src/app/Http/mod.rs", "pub mod Controllers;\npub mod Requests;\n")?;
+        self.overwrite_file("src/app/Models/mod.rs", "pub mod user;\npub mod post;\n")?;
+        self.overwrite_file("src/app/Jobs/mod.rs", "pub mod send_welcome_email;\n")?;
+        self.overwrite_file("src/app/Providers/mod.rs", "pub mod app_service_provider;\npub mod route_service_provider;\n")?;
+        self.overwrite_file("src/app/Http/Requests/mod.rs", "pub mod create_post_request;\n")?;
+        self.overwrite_file("src/app/Http/Controllers/mod.rs", "pub mod user_controller;\npub mod post_controller;\n")?;
 
         // routes/web.rs
         self.overwrite_file("src/routes/web.rs", &self.render("routes_web", project_name)?)?;
 
         // src/app/Models/
-        self.create_file("src/app/Models/User.rs", &self.render("user_model", project_name)?)?;
-        self.create_file("src/app/Models/Post.rs", &self.render("post_model", project_name)?)?;
+        self.create_file("src/app/Models/user.rs", &self.render("user_model", project_name)?)?;
+        self.create_file("src/app/Models/post.rs", &self.render("post_model", project_name)?)?;
 
         // src/app/Http/Controllers/
-        self.create_file("src/app/Http/Controllers/UserController.rs", &self.render("user_controller", project_name)?)?;
-        self.create_file("src/app/Http/Controllers/PostController.rs", &self.render("post_controller", project_name)?)?;
+        self.create_file("src/app/Http/Controllers/user_controller.rs", &self.render("user_controller", project_name)?)?;
+        self.create_file("src/app/Http/Controllers/post_controller.rs", &self.render("post_controller", project_name)?)?;
 
         // src/app/Http/Requests/
-        self.create_file("src/app/Http/Requests/CreatePostRequest.rs", CREATE_POST_REQUEST_TEMPLATE)?;
+        self.create_file("src/app/Http/Requests/create_post_request.rs", CREATE_POST_REQUEST_TEMPLATE)?;
 
         // src/app/Jobs/
-        self.create_file("src/app/Jobs/SendWelcomeEmail.rs", SEND_WELCOME_JOB_TEMPLATE)?;
+        self.create_file("src/app/Jobs/send_welcome_email.rs", SEND_WELCOME_JOB_TEMPLATE)?;
 
         // src/app/Providers/
-        self.create_file("src/app/Providers/AppServiceProvider.rs", APP_SERVICE_PROVIDER_TEMPLATE)?;
-        self.create_file("src/app/Providers/RouteServiceProvider.rs", ROUTE_SERVICE_PROVIDER_TEMPLATE)?;
+        self.create_file("src/app/Providers/app_service_provider.rs", APP_SERVICE_PROVIDER_TEMPLATE)?;
+        self.create_file("src/app/Providers/route_service_provider.rs", ROUTE_SERVICE_PROVIDER_TEMPLATE)?;
 
         // database/migrations/
         self.create_file("database/migrations/m0001_create_users_table.rs", MIGRATION_USERS_TEMPLATE)?;
@@ -580,6 +587,8 @@ serde  = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow  = "1"
 async-trait = "0.1"
+chrono  = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
 "#;
 
 const CARGO_TOML_DEV_TEMPLATE: &str = r#"[package]
@@ -603,6 +612,8 @@ serde  = { workspace = true }
 serde_json = { workspace = true }
 anyhow  = { workspace = true }
 async-trait = { workspace = true }
+chrono  = { workspace = true, features = ["serde"] }
+tracing = { workspace = true }
 "#;
 
 const MAIN_RS_TEMPLATE: &str = r#"use ravel_core::app::Application;
@@ -612,7 +623,8 @@ use ravel_http::server;
 mod routes;
 mod app;
 
-use app::Providers::{AppServiceProvider, RouteServiceProvider};
+use app::Providers::app_service_provider::AppServiceProvider;
+use app::Providers::route_service_provider::RouteServiceProvider;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -663,13 +675,10 @@ database = "database.sqlite"
 "#;
 
 const ROUTES_WEB_TEMPLATE: &str = r#"use ravel_facades::Route;
-use ravel_http::middleware::log_requests;
-use crate::app::Http::Controllers::{UserController, PostController};
+use crate::app::Http::Controllers::user_controller::UserController;
+use crate::app::Http::Controllers::post_controller::PostController;
 
 pub fn register() {
-    // Global middleware: log all requests
-    Route::middleware(log_requests);
-
     // Home
     Route::get("/", || async { "Hello, {{name}}! 🚀" });
 
@@ -687,142 +696,100 @@ pub fn register() {
 "#;
 
 const USER_MODEL_TEMPLATE: &str = r#"use ravel_eloquent::Model;
+	use serde::{Serialize, Deserialize};
 
-/// User model — one User has many Posts.
-#[derive(Model, Clone, Debug)]
-#[model(table = "users", timestamps)]
-pub struct User {
-    #[model(id)]
-    pub id: i32,
+	#[derive(Model, Clone, Debug, Serialize, Deserialize)]
+	#[model(table = "users", timestamps)]
+	struct User {
+	    #[model(id)]
+	    id: i32,
 
-    #[model(string, 255)]
-    pub name: String,
+	    #[model(string, 255)]
+	    name: String,
 
-    #[model(string, 254, unique)]
-    pub email: String,
+	    #[model(string, 254, unique)]
+	    email: String,
 
-    #[model(hidden)]
-    pub password: String,
+	    #[model(hidden)]
+	    password: String,
 
-    /// User has many Posts (foreign key: posts.user_id)
-    pub posts: HasMany<Post>,
-}
-"#;
+	    created_at: chrono::NaiveDateTime,
+	    updated_at: chrono::NaiveDateTime,
+	}
+	"#;
 
 const POST_MODEL_TEMPLATE: &str = r#"use ravel_eloquent::Model;
+	use serde::{Serialize, Deserialize};
 
-/// Post model — each Post belongs to a User.
-#[derive(Model, Clone, Debug)]
-#[model(table = "posts", timestamps)]
-pub struct Post {
-    #[model(id)]
-    pub id: i32,
+	#[derive(Model, Clone, Debug, Serialize, Deserialize)]
+	#[model(table = "posts", timestamps)]
+	struct Post {
+	    #[model(id)]
+	    id: i32,
 
-    #[model(string, 255)]
-    pub title: String,
+	    #[model(string, 255)]
+	    title: String,
 
-    #[model(text)]
-    pub content: String,
+	    #[model(text)]
+	    content: String,
 
-    #[model(integer)]
-    #[model(belongs_to, from = "user_id", to = "id")]
-    pub user_id: i32,
+	    #[model(integer)]
+	    user_id: i32,
 
-    /// The User who wrote this post
-    pub user: BelongsTo<User>,
-}
-"#;
+	    created_at: chrono::NaiveDateTime,
+	    updated_at: chrono::NaiveDateTime,
+	}
+	"#;
 
 const USER_CONTROLLER_TEMPLATE: &str = r#"use ravel_http::controller::Controller;
-use ravel_core::container::Container;
-use ravel_facades::{Auth, Session, Config, Log, response, redirect};
-use ravel_http::error::RavelError;
-use axum::response::IntoResponse;
-use ravel_http::session::Session as SessionExt;
+	use ravel_core::container::Container;
+	use ravel_facades::Config;
+	use axum::response::IntoResponse;
 
-pub struct UserController;
+	pub struct UserController;
 
-impl Controller for UserController {
-    fn boot(_container: &Container) -> Self { Self }
-}
+	impl Controller for UserController {
+	    fn boot(_container: &Container) -> Self { Self }
+	}
 
-impl UserController {
-    /// GET /users — show usage of Config and Log facades
-    pub async fn index() -> impl IntoResponse {
-        let app_name: String = Config::get_or("app.name", "{{name}}");
-        Log::info!("User list requested in {app_name}");
-        response()
-            .json(serde_json::json!({"users": ["alice", "bob"]}))
-            .unwrap()
-    }
+	impl UserController {
+	    pub async fn index() -> impl IntoResponse {
+	        let name: String = Config::get_or("app.name", "{{name}}".to_string());
+	        format!("Welcome to {name} -- User list")
+	    }
 
-    /// GET /users/{id} — requires login; shows Auth facade + RavelError
-    pub async fn show(session: SessionExt, id: u32) -> Result<impl IntoResponse, RavelError> {
-        if Auth::guest(&session) {
-            return Ok(redirect("/login"));
-        }
-        let user_id: Option<i32> = Auth::id(&session);
-        Log::info!("User {id} viewed by {user_id:?}");
-        Ok(response()
-            .json(serde_json::json!({"id": id, "name": "Alice"}))
-            .unwrap())
-    }
+	    pub async fn show(axum::extract::Path(id): axum::extract::Path<u32>) -> impl IntoResponse {
+	        format!("User {id}")
+	    }
 
-    /// POST /login — demonstrate Auth::login + Session::flash
-    pub async fn login(mut session: SessionExt) -> impl IntoResponse {
-        Auth::login(&mut session, 1);
-        Session::flash(&mut session, "status", "Welcome back!");
-        redirect("/")
-    }
+	    pub async fn login() -> impl IntoResponse {
+	        "Logged in (Auth placeholder)"
+	    }
 
-    /// POST /logout
-    pub async fn logout(mut session: SessionExt) -> impl IntoResponse {
-        Auth::logout(&mut session);
-        redirect("/")
-    }
-}
-"#;
+	    pub async fn logout() -> impl IntoResponse {
+	        "Logged out"
+	    }
+	}
+	"#;
 
 const POST_CONTROLLER_TEMPLATE: &str = r#"use ravel_http::controller::Controller;
-use ravel_core::container::Container;
-use ravel_facades::{Queue, response, abort};
-use ravel_http::error::RavelError;
-use ravel_http::form_request::Validated;
-use axum::response::IntoResponse;
-use sea_orm::DatabaseConnection;
+	use ravel_core::container::Container;
+	use axum::response::IntoResponse;
 
-use crate::app::Http::Requests::CreatePostRequest;
-use crate::app::Models::Post;
-use crate::app::Jobs::SendWelcomeEmail;
+	pub struct PostController;
 
-pub struct PostController;
+	impl Controller for PostController {
+	    fn boot(_container: &Container) -> Self { Self }
+	}
 
-impl Controller for PostController {
-    fn boot(_container: &Container) -> Self { Self }
-}
-
-impl PostController {
-    /// POST /posts — FormRequest validation, Model::create, Queue::dispatch
-    pub async fn store(
-        Validated(req): Validated<CreatePostRequest>,
-        db: DatabaseConnection,
-    ) -> Result<impl IntoResponse, RavelError> {
-        let post = Post::create(
-            serde_json::to_value(&req).map_err(|e| abort(500, e.to_string()))?,
-            &db,
-        )
-        .await
-        .map_err(|e| abort(500, e.to_string()))?;
-
-        Queue::dispatch(SendWelcomeEmail { user_id: req.user_id })?;
-
-        Ok(response()
-            .status(201)
-            .json(post.to_public_json())
-            .unwrap())
-    }
-}
-"#;
+	impl PostController {
+	    pub async fn store(
+	        axum::extract::Json(body): axum::extract::Json<serde_json::Value>,
+	    ) -> impl IntoResponse {
+	        format!("Post created: {body}")
+	    }
+	}
+	"#;
 
 const CREATE_POST_REQUEST_TEMPLATE: &str = r#"use ravel_http::form_request::FormRequest;
 use ravel_http::validation::{FieldRule, Rule};
@@ -847,15 +814,14 @@ impl FormRequest for CreatePostRequest {
             FieldRule::new("content", vec![Rule::Required]),
             FieldRule::new("user_id", vec![
                 Rule::Required,
-                Rule::Exists { table: "users", column: "id", ignore_id: None },
+                Rule::Exists { table: "users", column: "id" },
             ]),
         ]
     }
 }
 "#;
 
-const SEND_WELCOME_JOB_TEMPLATE: &str = r#"use ravel_facades::Log;
-use ravel_macros::Job;
+const SEND_WELCOME_JOB_TEMPLATE: &str = r#"use ravel_macros::Job;
 use serde::{Serialize, Deserialize};
 
 /// Background job: send a welcome email after a post is created.
@@ -867,31 +833,29 @@ pub struct SendWelcomeEmail {
 
 impl SendWelcomeEmail {
     pub async fn execute(&self) -> anyhow::Result<()> {
-        Log::info!("Welcome email sent to user {}", self.user_id);
+        tracing::info!("Welcome email sent to user {}", self.user_id);
         Ok(())
     }
 }
 "#;
 
 const APP_SERVICE_PROVIDER_TEMPLATE: &str = r#"use ravel_core::app::ServiceProvider;
-use ravel_core::container::Container;
-use ravel_facades::Queue;
-use anyhow::Result;
+	use ravel_core::container::Container;
+	use anyhow::Result;
 
-pub struct AppServiceProvider;
+	pub struct AppServiceProvider;
 
-impl ServiceProvider for AppServiceProvider {
-    fn register(&self, _container: &Container) -> Result<()> {
-        // Register Queue with in-memory driver
-        Queue::memory();
-        Ok(())
-    }
+	impl ServiceProvider for AppServiceProvider {
+	    fn register(&self, _container: &Container) -> Result<()> {
+	        // Register services here (Queue, Storage, etc.)
+	        Ok(())
+	    }
 
-    fn name(&self) -> &str {
-        "AppServiceProvider"
-    }
-}
-"#;
+	    fn name(&self) -> &str {
+	        "AppServiceProvider"
+	    }
+	}
+	"#;
 
 const ROUTE_SERVICE_PROVIDER_TEMPLATE: &str = r#"use ravel_core::app::ServiceProvider;
 use ravel_core::container::Container;
@@ -1115,7 +1079,7 @@ mod tests {
         g.scaffold_controller("UserController").unwrap();
 
         let content =
-            std::fs::read_to_string(tmp.join("src/app/Http/Controllers/UserController.rs")).unwrap();
+            std::fs::read_to_string(tmp.join("src/app/Http/Controllers/user_controller.rs")).unwrap();
         assert!(content.contains("pub struct UserController"));
         assert!(content.contains("impl Controller for UserController"));
 
@@ -1131,7 +1095,7 @@ mod tests {
         g.scaffold_middleware("AuthMiddleware").unwrap();
 
         let content =
-            std::fs::read_to_string(tmp.join("src/app/Http/Middleware/AuthMiddleware.rs")).unwrap();
+            std::fs::read_to_string(tmp.join("src/app/Http/Middleware/auth_middleware.rs")).unwrap();
         assert!(content.contains("pub struct AuthMiddleware"));
 
         let _ = std::fs::remove_dir_all(&tmp);
@@ -1168,7 +1132,7 @@ mod tests {
         let g = Generator::new(&tmp);
         g.scaffold_seeder("UserSeeder").unwrap();
 
-        let content = std::fs::read_to_string(tmp.join("database/seeders/UserSeeder.rs")).unwrap();
+        let content = std::fs::read_to_string(tmp.join("database/seeders/user_seeder.rs")).unwrap();
         assert!(content.contains("pub async fn run(db: &DatabaseConnection)"));
 
         let _ = std::fs::remove_dir_all(&tmp);
@@ -1183,7 +1147,7 @@ mod tests {
         g.scaffold_provider("RouteServiceProvider").unwrap();
 
         let content =
-            std::fs::read_to_string(tmp.join("src/app/Providers/RouteServiceProvider.rs")).unwrap();
+            std::fs::read_to_string(tmp.join("src/app/Providers/route_service_provider.rs")).unwrap();
         assert!(content.contains("impl ServiceProvider for RouteServiceProvider"));
         assert!(content.contains("fn register"));
         assert!(content.contains("fn boot"));
@@ -1200,7 +1164,7 @@ mod tests {
         g.scaffold_request("LoginRequest").unwrap();
 
         let content =
-            std::fs::read_to_string(tmp.join("src/app/Http/Requests/LoginRequest.rs")).unwrap();
+            std::fs::read_to_string(tmp.join("src/app/Http/Requests/login_request.rs")).unwrap();
         assert!(content.contains("pub struct LoginRequest"));
         assert!(content.contains("impl FormRequest for LoginRequest"));
         assert!(content.contains("fn rules"));
@@ -1223,14 +1187,14 @@ mod tests {
         assert!(tmp.join("config/database.toml").exists());
         assert!(tmp.join("src/routes/web.rs").exists());
         assert!(tmp.join("src/app/Http/Controllers").is_dir());
-        assert!(tmp.join("src/app/Models/User.rs").exists());
-        assert!(tmp.join("src/app/Models/Post.rs").exists());
-        assert!(tmp.join("src/app/Http/Controllers/UserController.rs").exists());
-        assert!(tmp.join("src/app/Http/Controllers/PostController.rs").exists());
-        assert!(tmp.join("src/app/Http/Requests/CreatePostRequest.rs").exists());
-        assert!(tmp.join("src/app/Jobs/SendWelcomeEmail.rs").exists());
-        assert!(tmp.join("src/app/Providers/AppServiceProvider.rs").exists());
-        assert!(tmp.join("src/app/Providers/RouteServiceProvider.rs").exists());
+        assert!(tmp.join("src/app/Models/user.rs").exists());
+        assert!(tmp.join("src/app/Models/post.rs").exists());
+        assert!(tmp.join("src/app/Http/Controllers/user_controller.rs").exists());
+        assert!(tmp.join("src/app/Http/Controllers/post_controller.rs").exists());
+        assert!(tmp.join("src/app/Http/Requests/create_post_request.rs").exists());
+        assert!(tmp.join("src/app/Jobs/send_welcome_email.rs").exists());
+        assert!(tmp.join("src/app/Providers/app_service_provider.rs").exists());
+        assert!(tmp.join("src/app/Providers/route_service_provider.rs").exists());
         assert!(tmp.join("database/migrations").is_dir());
         assert!(tmp.join("database/migrations/mod.rs").exists());
         assert!(tmp.join("src/bin/migrate.rs").exists());

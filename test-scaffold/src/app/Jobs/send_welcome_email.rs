@@ -1,4 +1,3 @@
-use ravel_facades::Log;
 use ravel_macros::Job;
 use serde::{Serialize, Deserialize};
 
@@ -11,7 +10,7 @@ pub struct SendWelcomeEmail {
 
 impl SendWelcomeEmail {
     pub async fn execute(&self) -> anyhow::Result<()> {
-        Log::info!("Welcome email sent to user {}", self.user_id);
+        tracing::info!("Welcome email sent to user {}", self.user_id);
         Ok(())
     }
 }

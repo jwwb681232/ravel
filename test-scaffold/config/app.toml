@@ -1,7 +1,7 @@
 # Ravel application configuration
 
 [app]
-name = "test-scaffold"
+name = "MyApp"
 env = "local"
 debug = true
 url = "http://localhost:3000"
