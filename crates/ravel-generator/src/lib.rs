@@ -47,6 +47,8 @@ impl Generator {
         tera.add_raw_template("job", JOB_TEMPLATE).unwrap();
         tera.add_raw_template("cargo_toml", CARGO_TOML_TEMPLATE)
             .unwrap();
+        tera.add_raw_template("cargo_toml_dev", CARGO_TOML_DEV_TEMPLATE)
+            .unwrap();
         tera.add_raw_template("main_rs", MAIN_RS_TEMPLATE).unwrap();
         tera.add_raw_template("app_toml", APP_TOML_TEMPLATE)
             .unwrap();
@@ -183,7 +185,7 @@ impl Generator {
     }
 
     /// Scaffold the initial project skeleton (used by `ravel new`).
-    pub fn scaffold_project(&self, project_name: &str) -> Result<()> {
+    pub fn scaffold_project(&self, project_name: &str, dev: bool) -> Result<()> {
         let dirs = [
             "app/Http/Controllers",
             "app/Http/Middleware",
@@ -207,8 +209,16 @@ impl Generator {
             self.ensure_dir(dir)?;
         }
 
-        // Cargo.toml
-        self.overwrite_file("Cargo.toml", &self.render("cargo_toml", project_name)?)?;
+        // Cargo.toml — choose template based on dev mode
+        let cargo_template = if dev {
+            "cargo_toml_dev"
+        } else {
+            "cargo_toml"
+        };
+        self.overwrite_file(
+            "Cargo.toml",
+            &self.render(cargo_template, project_name)?,
+        )?;
 
         // src/main.rs
         self.overwrite_file("src/main.rs", &self.render("main_rs", project_name)?)?;
@@ -223,6 +233,17 @@ impl Generator {
 
         // .env.example (always overwrite to keep in sync)
         self.overwrite_file(".env.example", &self.render("env", project_name)?)?;
+
+        // Dev marker file — records framework_root for ravel serve
+        if dev {
+            let framework_root = std::env::current_dir()
+                .context("Failed to read current directory")?;
+            let marker = format!(
+                "framework_root = \"{}\"\n",
+                framework_root.display()
+            );
+            self.overwrite_file(".ravel-dev", &marker)?;
+        }
 
         // Database migrator (database/migrations/mod.rs)
         if !self.exists("database/migrations/mod.rs") {
@@ -502,6 +523,27 @@ anyhow  = "1"
 async-trait = "0.1"
 "#;
 
+const CARGO_TOML_DEV_TEMPLATE: &str = r#"[package]
+name = "{{snake}}"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ravel-core     = { path = "../crates/ravel-core" }
+ravel-http     = { path = "../crates/ravel-http" }
+ravel-eloquent = { path = "../crates/ravel-eloquent" }
+ravel-facades  = { path = "../crates/ravel-facades" }
+ravel-db-seaorm = { path = "../crates/ravel-db-seaorm" }
+sea-orm             = { version = "2.0.0-rc.40", features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
+sea-orm-migration   = { version = "2.0.0-rc.40" }
+axum   = "0.8"
+tokio  = { version = "1", features = ["full"] }
+serde  = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow  = "1"
+async-trait = "0.1"
+"#;
+
 const MAIN_RS_TEMPLATE: &str = r#"use axum::Router;
 use ravel_http::route::Route;
 
@@ -727,7 +769,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
 
         let g = Generator::new(&tmp);
-        g.scaffold_project("MyApp").unwrap();
+        g.scaffold_project("MyApp", false).unwrap();
 
         assert!(tmp.join("Cargo.toml").exists());
         assert!(tmp.join("src/main.rs").exists());
@@ -747,6 +789,31 @@ mod tests {
 
         let migrate_bin = std::fs::read_to_string(tmp.join("src/bin/migrate.rs")).unwrap();
         assert!(migrate_bin.contains("ravel migrate"));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_scaffold_project_dev_mode() {
+        let tmp = std::env::temp_dir().join("ravel_gen_project_dev");
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        let g = Generator::new(&tmp);
+        g.scaffold_project("MyApp", true).unwrap();
+
+        assert!(tmp.join("Cargo.toml").exists());
+        assert!(tmp.join("src/main.rs").exists());
+        assert!(tmp.join(".ravel-dev").exists());
+
+        // Dev mode Cargo.toml should use path dependencies
+        let cargo = std::fs::read_to_string(tmp.join("Cargo.toml")).unwrap();
+        assert!(cargo.contains("path = \"../crates/ravel-core\""));
+        assert!(cargo.contains("path = \"../crates/ravel-http\""));
+        assert!(!cargo.contains("git = \"https://github.com"));
+
+        // .ravel-dev should contain framework_root
+        let marker = std::fs::read_to_string(tmp.join(".ravel-dev")).unwrap();
+        assert!(marker.contains("framework_root"));
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
