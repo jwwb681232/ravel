@@ -1,5 +1,11 @@
+# `.env` is loaded by the framework on startup. Real process environment
+# (e.g. `docker run -e KEY=value`) always wins over this file.
+#
+# Keys here correspond to the `from = "..."` bindings in `config/*.toml`.
+# Anything you don't set falls back to the `default` literal in the TOML.
+
 APP_NAME={{name}}
 APP_ENV=local
-APP_DEBUG=true
-APP_URL=http://localhost:3000
 APP_KEY=base64:{{app_key}}
+APP_SERVER_HOST=127.0.0.1
+APP_SERVER_PORT=3000

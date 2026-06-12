@@ -20,4 +20,6 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 tera = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+dotenvy = { workspace = true }
+ravel-core = { path = "../ravel-core" }
 include_dir = "0.7"

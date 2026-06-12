@@ -132,8 +132,7 @@ use ravel_core::app::{Application, ServiceProvider};
 use ravel_facades::Config;
 
 Application::new()
-    .load_env(".")
-    .load_config("config")
+    .load_config("config")    // also loads .env from the project root
     .with_cache()
     .with_app_key("base64:...")?
     .register_provider(MyProvider)
@@ -141,6 +140,36 @@ Application::new()
 
 // After boot(), all facades are globally available
 let app_name: String = Config::get("app.name").unwrap();
+```
+
+### Configuration (Laravel-style)
+
+Ravel uses a single source of truth: every value is read with `Config::get`, and each config file declares where its values come from — either a plain literal or a binding to an environment variable.
+
+- **File stem = namespace.** A file `config/database.toml` contributes keys under the `database.*` prefix. There is no need to wrap everything in `[database]` inside the file.
+- **Plain literals** are used as-is: `port = 3000` keeps its type.
+- **Env bindings** declare which environment variable supplies the value, and what default to fall back to if it is missing:
+
+  ```toml
+  # config/database.toml
+  [default]
+  driver   = "sqlite"
+  database = { from = "DATABASE_NAME", default = "database.sqlite" }
+  port     = { from = "DATABASE_PORT", default = 3306 }
+  ```
+
+- `.env` is loaded automatically on startup. Real process environment (`docker run -e KEY=value`, `k8s secrets`, `export ...`) always wins over `.env`, which always wins over the literal `default`.
+- Required values: omit `default` to make a binding required — startup fails with a clear error if the env var is missing.
+- Type coercion: when an env var is present, the `default` literal's type is the parsing target. `"true"` becomes `bool`, `"8080"` becomes `u16` (when the default is `8080`), etc.
+
+Read values uniformly:
+
+```rust
+use ravel_facades::Config;
+
+let driver: String = Config::get("database.default.driver", "sqlite");
+let port:   u16    = Config::get("database.default.port",    0);
+let name:   String = Config::get("app.app.name",             "Ravel");
 ```
 
 ### HTTP Layer (ravel-http)
@@ -364,11 +393,11 @@ ravel/
 ### Configuration & Environment
 | Method | Description |
 |--------|-------------|
-| `Config::get::<T>(key)` | Get typed config value |
-| `Config::get_or::<T>(key, default)` | Get with fallback |
+| `Config::get::<T>(key, default)` | Get typed config value, fall back to `default` |
 | `Config::has(key)` | Check key existence |
-| `env("KEY")` | Get environment variable |
-| `env_or("KEY", "default")` | Get env var with fallback |
+| `Config::set(key, value)` | Set value at runtime (testing / dynamic config) |
+
+`Config::get` reads from the merged result of `config/*.toml` and `.env`. See the [Configuration](#configuration-laravel-style) section above for the binding syntax and priority rules.
 
 ### Caching & Encryption
 | Method | Description |

@@ -313,15 +313,20 @@ impl Generator {
         // database/seeders/
         self.create_file("database/seeders/user_seeder.rs", Self::raw_template("user-seeder.rs")?)?;
 
-        // Dev marker file — records framework_root for ravel serve
+        // Dev marker file — records framework_root + project_root
+        // for ravel serve. `project_root` is used to locate `.env`
+        // (which lives in the project, not the framework).
         if dev {
             let framework_root = std::env::current_dir()
                 .context("Failed to read current directory")?;
+            // The project root is the parent of the directory we just
+            // scaffolded into (i.e. the cwd before scaffold switched).
+            let project_root = framework_root.join(project_name);
             // TOML requires forward slashes in paths
-            let root_str = framework_root.display().to_string().replace('\\', "/");
+            let fw_str = framework_root.display().to_string().replace('\\', "/");
+            let proj_str = project_root.display().to_string().replace('\\', "/");
             let marker = format!(
-                "framework_root = \"{}\"\n",
-                root_str
+                "framework_root = \"{fw_str}\"\nproject_root = \"{proj_str}\"\n",
             );
             self.overwrite_file(".ravel-dev", &marker)?;
         }

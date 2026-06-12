@@ -81,6 +81,13 @@ impl EnvRepo {
         Self::load(dir.as_ref().join(".env"))
     }
 
+    /// Create a repo from an explicit map of variables. Used by
+    /// [`crate::app::Application::load_config`] to expose the merged
+    /// (real env + `.env`) view to the rest of the app.
+    pub fn from_map(vars: std::collections::HashMap<String, String>) -> Self {
+        Self { vars }
+    }
+
     /// Get an environment variable value.
     pub fn get(&self, key: &str) -> Option<&str> {
         self.vars.get(key).map(|s| s.as_str())

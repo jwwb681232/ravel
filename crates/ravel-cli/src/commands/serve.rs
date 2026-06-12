@@ -15,33 +15,36 @@ use std::process::Command;
 
 // ── Config reader ──────────────────────────────────────────────────
 
+/// Read bind address from `config/app.toml` (and the local `.env`).
+///
+/// This mirrors what `ravel_core::app::Application::load_config` does,
+/// so the "plan" printed by `ravel serve` matches what the child
+/// process will actually bind to — including any `APP_*` env var
+/// overrides and any values in the project's `.env`.
 fn read_config() -> (u16, String) {
-    let path = Path::new("config/app.toml");
-    if !path.exists() {
+    // Use the framework's own loader so we don't duplicate the
+    // env-resolution logic.
+    let dir = Path::new("config");
+    if !dir.is_dir() {
         return (3000, "127.0.0.1".into());
     }
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return (3000, "127.0.0.1".into()),
+
+    // Populate process env from `.env` (no override — real shell env wins).
+    let env_path = dir.parent().unwrap_or(dir).join(".env");
+    let _ = dotenvy::from_path(&env_path);
+
+    let env: std::collections::HashMap<String, String> = std::env::vars().collect();
+
+    let Ok(mut repo) = ravel_core::config::ConfigRepo::load_dir(dir) else {
+        return (3000, "127.0.0.1".into());
     };
-    match toml::from_str::<toml::Value>(&content) {
-        Ok(val) => {
-            let port = val
-                .get("server")
-                .and_then(|s| s.get("port"))
-                .and_then(|p| p.as_integer())
-                .map(|p| p as u16)
-                .unwrap_or(3000);
-            let host = val
-                .get("server")
-                .and_then(|s| s.get("host"))
-                .and_then(|h| h.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "127.0.0.1".into());
-            (port, host)
-        }
-        Err(_) => (3000, "127.0.0.1".into()),
-    }
+    let _ = repo.resolve_env_overrides(&env);
+
+    let port: u16 = repo
+        .get_or("app.server.port", 3000u16);
+    let host: String = repo
+        .get_or("app.server.host", "127.0.0.1".to_string());
+    (port, host)
 }
 
 fn is_port_in_use(host: &str, port: u16) -> bool {
@@ -52,6 +55,10 @@ fn is_port_in_use(host: &str, port: u16) -> bool {
 
 struct DevMarker {
     framework_root: String,
+    /// Path to the scaffolded project (where `.env` and `config/` live).
+    /// Optional for backward compat with markers written by older
+    /// versions of the CLI.
+    project_root: Option<String>,
 }
 
 fn read_dev_marker() -> Option<DevMarker> {
@@ -65,7 +72,14 @@ fn read_dev_marker() -> Option<DevMarker> {
         .get("framework_root")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())?;
-    Some(DevMarker { framework_root })
+    let project_root = val
+        .get("project_root")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    Some(DevMarker {
+        framework_root,
+        project_root,
+    })
 }
 
 // ── Main handler ───────────────────────────────────────────────────
@@ -141,9 +155,18 @@ fn run_dev(marker: &DevMarker) -> Result<()> {
     let (port, host) = read_config();
 
     println!("🚀 Starting server (dev mode)...");
-    println!("   Framework: {}", marker.framework_root);
-    println!("   http://{host}:{port}");
     println!();
+
+    // Load the project's `.env` into *our* process environment. The
+    // spawned `cargo run` then inherits it, so the child binary finds
+    // APP_KEY etc. without needing dotenvy to be re-invoked from
+    // framework_root (where it would look for a non-existent `.env`).
+    if let Some(project_root) = &marker.project_root {
+        let env_path = Path::new(project_root).join(".env");
+        // Use `from_path` (not `from_path_override`) so that the user's
+        // shell env still wins — matches Laravel semantics.
+        let _ = dotenvy::from_path(&env_path);
+    }
 
     let status = Command::new("cargo")
         .arg("run")

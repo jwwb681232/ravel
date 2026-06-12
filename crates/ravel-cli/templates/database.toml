@@ -1,6 +1,7 @@
-# Database configuration
-# Supports: sqlite, postgres, mysql
+# `database.toml` — every key is namespaced under `database.*`.
+# SQLite by default; switch driver and point at real env values for
+# other backends.
 
 [default]
-driver = "sqlite"
-database = "database.sqlite"
+driver   = "sqlite"
+database = { from = "DATABASE_NAME", default = "database.sqlite" }

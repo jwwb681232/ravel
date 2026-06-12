@@ -20,6 +20,8 @@ impl Config {
         Self::try_app().and_then(|app| app.config().get(key))
     }
 
+    /// Get a config value with a fallback default. This is the
+    /// recommended entry point — same as Laravel's `config('key', default)`.
     pub fn get_or<T: DeserializeOwned>(key: &str, default: T) -> T {
         Self::get(key).unwrap_or(default)
     }

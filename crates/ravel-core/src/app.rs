@@ -165,9 +165,30 @@ impl Application {
 
     /// Load TOML configuration from `dir` and store it both in the
     /// internal [`ConfigRepo`] and in the container (as a singleton).
+    ///
+    /// This also:
+    /// 1. Loads `.env` from the parent of `dir` (if present) via `dotenvy`.
+    /// 2. Resolves all env-bound values (`{ from = "...", default = ... }`)
+    ///    against the merged environment (real process env wins over `.env`).
     pub fn load_config(mut self, dir: impl AsRef<std::path::Path>) -> Result<Self> {
+        let dir = dir.as_ref();
+
+        // Populate the process environment from `.env` (sibling of `config/`).
+        // Use `from_path` (NOT `from_path_override`) so that real process
+        // environment variables (e.g. `APP_SERVER_PORT=4567` set in the
+        // shell) win over the file — matching Laravel semantics
+        // "env > .env > config default".
+        // Missing `.env` is fine; the error is ignored.
+        let env_path = dir.parent().unwrap_or(dir).join(".env");
+        let _ = dotenvy::from_path(&env_path);
+
+        // Build a unified env map: real process env wins (so a `docker run
+        // -e KEY=value` overrides anything in `.env`).
+        let env: std::collections::HashMap<String, String> = std::env::vars().collect();
+
         let mut repo = ConfigRepo::load_dir(dir)?;
-        repo.apply_env_overrides();
+        repo.resolve_env_overrides(&env)?;
+        self.env = crate::env::EnvRepo::from_map(env);
         self.config = repo.clone();
         self.container.instance(repo);
         Ok(self)

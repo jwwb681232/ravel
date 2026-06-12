@@ -65,6 +65,9 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # Config / serialization formats
 toml = { version = "0.8" }
 
+# .env file loading
+dotenvy = { version = "0.15" }
+
 # Cache / session (optional)
 redis = { version = "0.25", features = ["tokio-comp"] }
 
